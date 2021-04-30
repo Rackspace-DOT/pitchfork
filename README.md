@@ -146,7 +146,8 @@ Browse to the home page and after it loads refresh the page. The refresh will fo
 
 #### Adding API Calls
 
-[Pitchfork API Calls](https://9050ceb3e176bf11567b-e447b4b840d054d4f862ad6101a6d6ee.ssl.cf5.rackcdn.com/api_calls/api_calls.tar.gz)
+Pitchfork API Calls
+Attached as api_calls.tar.gz
 
 The download above will provide all of the mongodb bson files for each of the Rackspace products. Once you download the files you can do the following to restore all of the product collections to the pitchfork database.
 
