@@ -100,11 +100,21 @@ class ProductsView(FlaskView):
             return redirect('/')
 
         """ Retrieve all of the elements for the call """
-        api_url, header, data_package = helper.generate_vars_for_call(
-            found_product,
-            api_call,
-            request
-        )
+        try:
+            api_url, header, data_package = helper.generate_vars_for_call(
+                found_product,
+                api_call,
+                request
+            )
+        except helper.UnsafeOutboundRequest as e:
+            return jsonify(
+                request_headers=None,
+                response_headers=None,
+                response_body=str(e),
+                response_code=400,
+                api_url=None,
+                data_package=None
+            ), 400
 
         """ Send off the request and retrieve the data elements """
         if request.json.get('mock'):

@@ -20,6 +20,13 @@ from pygments import highlight
 from flask import g, session
 from models import Variable
 from dateutil import tz
+from url_safety import (
+    UnsafeOutboundRequest,
+    _build_api_url,
+    _validate_endpoint_hostname,
+    _validate_outbound_url,
+    sanitize_query_filter,
+)
 
 
 import re
@@ -32,6 +39,7 @@ import datetime
 
 
 UTC = tz.tzutc()
+API_REQUEST_TIMEOUT = (3.05, 30)
 
 
 requests.packages.urllib3.disable_warnings()
@@ -250,10 +258,8 @@ def generate_api_url_for_call(product, request):
     else:
         region_url = product.us_api
 
-    temp_url = "%s%s" % (
-        region_url,
-        request.json.get('api_url')
-    )
+    is_mock = bool(request.json.get('mock'))
+    temp_url = _build_api_url(region_url, request.json.get('api_url'))
     if request.json.get('mock'):
         if data_center is None:
             api_url = temp_url
@@ -262,17 +268,24 @@ def generate_api_url_for_call(product, request):
     else:
         api_url = process_api_url(temp_url, request)
 
-    return api_url
+    if is_mock:
+        return api_url
+
+    _validate_endpoint_hostname(region_url, api_url)
+    return _validate_outbound_url(api_url)
 
 
 def process_api_url(url, request):
     """ Regex loop to replace the URL with the needed values """
 
     def evaluate_replace(m):
-        if request.json.get(m.group(2)):
+        replacement = request.json.get(m.group(2))
+        if not replacement and m.group(2) == 'region':
+            replacement = request.json.get('data_center')
+        if replacement:
             return re.sub(
                 m.group(1),
-                request.json.get(m.group(2)).strip(),
+                replacement.strip(),
                 m.group(0)
             )
         else:
@@ -281,8 +294,9 @@ def process_api_url(url, request):
     api_url = re.sub('(\{(.+?)\})', evaluate_replace, url)
     temp_filter = request.json.get('add_filter')
     if temp_filter and len(temp_filter) > 1:
-        temp_filter = re.sub('\?', '', temp_filter)
-        api_url = '%s?%s' % (api_url, temp_filter)
+        temp_filter = sanitize_query_filter(temp_filter)
+        if temp_filter:
+            api_url = '%s?%s' % (api_url, temp_filter)
 
     return api_url
 
@@ -545,18 +559,27 @@ def create_custom_header(api_call, request):
 
 def process_api_request(url, verb, data, headers, html_convert=True):
     try:
+        _validate_outbound_url(
+            url,
+            require_https=bool(headers and headers.get('X-Auth-Token'))
+        )
+        request_method = getattr(requests, verb.lower())
         if data:
-            response = getattr(requests, verb.lower())(
+            response = request_method(
                 url,
                 headers=headers,
                 data=json.dumps(data),
-                verify=False
+                verify=False,
+                allow_redirects=False,
+                timeout=API_REQUEST_TIMEOUT
             )
         else:
-            response = getattr(requests, verb.lower())(
+            response = request_method(
                 url,
                 headers=headers,
-                verify=False
+                verify=False,
+                allow_redirects=False,
+                timeout=API_REQUEST_TIMEOUT
             )
     except Exception as e:
         return (
@@ -565,7 +588,7 @@ def process_api_request(url, verb, data, headers, html_convert=True):
                 "<span class='error-response'>An error occured "
                 "with the request. Details are below</span>"
             ),
-            str(e.message), ''
+            str(e), ''
         )
 
     try:
