@@ -493,12 +493,12 @@ class DefaultsTests(unittest.TestCase):
             if call.get('title') == 'Remove Nodes from Server Groups'
         )
         json_data = {
-            'cloud_server_id': 'server-0',
-            'server_group_id': 'group-0',
-            'cloud_server_id_1': 'server-1',
-            'server_group_id_1': 'group-1',
-            'cloud_server_id_2': 'server-2',
-            'server_group_id_2': 'group-2'
+            'cloud_server_id': 'server-a',
+            'server_group_id': 'group-a',
+            'cloud_server_id_1': 'server-a',
+            'server_group_id_1': 'group-b',
+            'cloud_server_id_2': 'server-b',
+            'server_group_id_2': 'group-b'
         }
 
         data = helper.process_api_data_request(call, json_data)
@@ -508,14 +508,14 @@ class DefaultsTests(unittest.TestCase):
                 item.get('cloud_server').get('id')
                 for item in data
             ],
-            ['server-0', 'server-1', 'server-2']
+            ['server-a', 'server-a', 'server-b']
         )
         self.assertEqual(
             [
                 item.get('server_group').get('id')
                 for item in data
             ],
-            ['group-0', 'group-1', 'group-2']
+            ['group-a', 'group-b', 'group-b']
         )
 
     def test_bulk_rackconnect_variables_are_grouped_duplicates(self):

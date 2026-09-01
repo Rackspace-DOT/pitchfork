@@ -141,31 +141,29 @@
 
         function duplicate_field_count(field_name) {
             // Grouped duplicate variables must not end in _<digit>.
-            var items = field_name.split('_');
-            var count = parseInt(items[items.length -1]);
-            return isNaN(count) ? 0 : count;
+            var match = field_name.match(/_(\d+)$/);
+            return match ? parseInt(match[1], 10) : 0;
         }
 
         function duplicate_field_name(field_name, count) {
-            var items = field_name.split('_');
-            if (count > 0) {
-                items.pop();
-            }
-            return items.join('_') + '_' + (count + 1);
+            var base_name = field_name.replace(/_\d+$/, '');
+            return base_name + '_' + (count + 1);
         }
 
         function duplicate_group_rows(table, group_name, count) {
-            return table.find(
-                '.duplicate-group-row[data-duplicate-group="' +
-                group_name + '"]'
-            ).filter(function() {
-                var field = $(this).find(':input:visible').first();
-                return duplicate_field_count(field.attr('name')) === count;
+            return table.find('.duplicate-group-row').filter(function() {
+                var row = $(this);
+                var field = row.find(':input').first();
+                return (
+                    row.attr('data-duplicate-group') === group_name &&
+                    field.length &&
+                    duplicate_field_count(field.attr('name')) === count
+                );
             });
         }
 
         function update_duplicate_field(row, count) {
-            var field = row.find(':input:visible').first();
+            var field = row.find(':input').first();
             var next_name = duplicate_field_name(field.attr('name'), count);
             field.attr('name', next_name);
             field.attr('id', next_name);
@@ -175,7 +173,10 @@
 
         function add_duplicate_group(button, group_name) {
             var parent_row = button.closest('tr');
-            var current_name = parent_row.find(':input:visible').first().attr('name');
+            var current_name = parent_row.find(':input').first().attr('name');
+            if (!current_name) {
+                return;
+            }
             var count = duplicate_field_count(current_name);
 
             if (count >= 2) {
@@ -187,6 +188,9 @@
                 group_name,
                 count
             );
+            if (!group_rows.length) {
+                return;
+            }
             var clone_rows = group_rows.clone(true);
 
             group_rows.find('.duplicate-field').hide();
