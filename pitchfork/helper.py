@@ -80,8 +80,8 @@ def generate_group_choices(product):
 
 
 def check_url_endpoints(us, uk):
-    us_find = re.findall('\{(.+?)\}', us)
-    uk_find = re.findall('\{(.+?)\}', uk)
+    us_find = re.findall(r'\{(.+?)\}', us)
+    uk_find = re.findall(r'\{(.+?)\}', uk)
     if 'region' in us_find:
         return False
 
@@ -177,6 +177,8 @@ def generate_edit_call_form(product, call, call_id):
             temp.form.description.data = temp_variable.description
             temp.form.variable_name.data = temp_variable.variable_name
             temp.form.field_display.data = temp_variable.field_display
+            temp.form.duplicate.data = temp_variable.duplicate
+            temp.form.duplicate_group.data = temp_variable.duplicate_group
             temp.form.field_display_data.data = (
                 temp_variable.field_display_data
             )
@@ -193,7 +195,7 @@ def generate_edit_call_form(product, call, call_id):
 def get_vars_for_call(submissions):
     data, count = [], []
     for key, value in submissions:
-        temp = re.search('variable_(\d+?)-(\w.*)', key)
+        temp = re.search(r'variable_(\d+?)-(\w.*)', key)
         if temp:
             if count:
                 if not int(temp.group(1)) in count:
@@ -205,7 +207,7 @@ def get_vars_for_call(submissions):
         data.append({'ignore': 'placeholder'})
 
     for key, value in submissions:
-        temp = re.search('variable_(\d+?)-(\w.*)', key)
+        temp = re.search(r'variable_(\d+?)-(\w.*)', key)
         if temp:
             if temp.group(2) != 'csrf_token':
                 if str(temp.group(2)) == 'required':
@@ -291,7 +293,7 @@ def process_api_url(url, request):
         else:
             return m.group(1)
 
-    api_url = re.sub('(\{(.+?)\})', evaluate_replace, url)
+    api_url = re.sub(r'(\{(.+?)\})', evaluate_replace, url)
     temp_filter = request.json.get('add_filter')
     if temp_filter and len(temp_filter) > 1:
         temp_filter = sanitize_query_filter(temp_filter)
@@ -305,6 +307,12 @@ def check_variable_type(api_call, key_value):
     for var in api_call.get('variables'):
         if var.get('variable_name') == key_value:
             return var.get('field_type')
+
+    base_key = re.match(r'(.+)_\d+$', key_value)
+    if base_key:
+        for var in api_call.get('variables'):
+            if var.get('variable_name') == base_key.group(1):
+                return var.get('field_type')
 
     return 'string'
 
@@ -367,7 +375,7 @@ def recursive_dict_object(
                     ]
 
             else:
-                _key = re.match('\{(.+?)\}', value_list)
+                _key = re.match(r'\{(.+?)\}', value_list)
                 if _key:
                     _value = json_data.get(_key.group(1))
                     if _value and _value != '':
@@ -405,14 +413,14 @@ def recursive_dict_object(
 
     else:
         if value:
-            _pkey = re.match('\{(.+?)\}', parent_key)
+            _pkey = re.match(r'\{(.+?)\}', parent_key)
             if _pkey:
                 _pkey_value = json_data.get(_pkey.group(1))
             else:
                 _pkey_value = parent_key
 
             try:
-                _key = re.match('\{(.+?)\}', value)
+                _key = re.match(r'\{(.+?)\}', value)
             except Exception:
                 _key = None
 
@@ -468,6 +476,16 @@ def process_api_data_request(api_call, json_data):
     req_key = None
     req_key_value = None
 
+    def evaluate_replace(m):
+        if json_data.get(m.group(2)):
+            return re.sub(
+                m.group(1),
+                json_data.get(m.group(2)).strip(),
+                m.group(0)
+            )
+        else:
+            return m.group(1)
+
     if api_call.get('required_key'):
         req_key = api_call.get('required_key_name')
         if api_call.get('required_key_type') == 'dict':
@@ -496,37 +514,32 @@ def process_api_data_request(api_call, json_data):
     elif isinstance(temp_json, list):
         for item in temp_json:
             if isinstance(item, dict):
+                temp_item_dict = {}
                 for key, value in item.iteritems():
                     if value:
-                        temp_dict = recursive_dict_object(
+                        temp_item_dict = recursive_dict_object(
                             key,
                             value,
                             api_call,
                             json_data,
                             temp_json,
-                            temp_dict,
+                            temp_item_dict,
                             req_key,
                             req_key_value
                         )
                     if value is None:
-                        temp_dict[str(key)] = None
+                        temp_item_dict[str(key)] = None
 
-                temp_list.append(temp_dict)
+                if temp_item_dict:
+                    temp_list.append(temp_item_dict)
             else:
-                def evaluate_replace(m):
-                    if json_data.get(m.group(2)):
-                        return re.sub(
-                            m.group(1),
-                            json_data.get(m.group(2)).strip(),
-                            m.group(0)
-                        )
-                    else:
-                        return m.group(1)
-
-                value = re.sub('(\{(.+?)\})', evaluate_replace, item)
+                value = re.sub(r'(\{(.+?)\})', evaluate_replace, item)
                 temp_list.append(value)
 
         return temp_list
+    else:
+        value = re.sub(r'("\{(.+?)\}")', evaluate_replace, data_object)
+        return value
 
 
 def create_custom_header(api_call, request):
@@ -551,7 +564,7 @@ def create_custom_header(api_call, request):
 
     if api_call.get('add_to_header'):
         temp_value = api_call.get('custom_header_value')
-        key_value = re.sub('(\{(.+?)\})', evaluate_replace, temp_value)
+        key_value = re.sub(r'(\{(.+?)\})', evaluate_replace, temp_value)
         header[api_call.get('custom_header_key')] = key_value.strip()
 
     return header
@@ -616,14 +629,14 @@ def process_api_request(url, verb, data, headers, html_convert=True):
             else:
                 content = json.loads(response.content)
     except Exception:
-        temp = re.findall('<body>(.+?)<\/body>', response.content, re.S)
+        temp = re.findall(r'<body>(.+?)<\/body>', response.content, re.S)
         if temp:
             formatted_content = re.sub(
-                '\n|\r|\s\s+?|<br \/>|<h1>',
+                r'\n|\r|\s\s+?|<br \/>|<h1>',
                 '',
                 temp[0]
             )
-            content = re.sub('<\/h1>', '<br />', formatted_content)
+            content = re.sub(r'<\/h1>', '<br />', formatted_content)
         elif len(response.text) > 5:
             content = "%s Status Code: %s" % (
                 str(response.text),
@@ -715,7 +728,8 @@ def log_api_call_request(
 def sanitize_data_for_mongo(data):
     temp_dict = {}
     for k, v in data.iteritems():
-        temp_dict[k] = re.sub('\.', '&#46;', v)
+        if type(v) is not list:
+            temp_dict[k] = re.sub(r'\.', '&#46;', v)
 
     return temp_dict
 

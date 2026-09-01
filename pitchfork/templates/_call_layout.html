@@ -86,13 +86,13 @@
                                     <th>Description</th>
                                 </tr>
                                 {% for var in api_call.get('variables') %}
-                                    <tr>
+                                    <tr{% if var.get('duplicate_group') %} class="duplicate-group-row" data-duplicate-group="{{ var.get('duplicate_group') }}"{% endif %}>
                                         <td width="26px">
                                             {% if var.get('duplicate') %}
-                                                <a class="duplicate-field tooltip-title" title="Add Network"><span class="fa fa-plus text-success"></span></a>
+                                                <a class="duplicate-field tooltip-title" title="Add Row" data-duplicate-group="{{ var.get('duplicate_group', '') }}"><span class="fa fa-plus text-success"></span></a>
                                             {% endif -%}
                                         </td>
-                                        <td>
+                                        <td class="variable-name-cell">
                                             {{ var.get('variable_name') }}
                                         </td>
                                         <td{% if var.get('required') %} class="text-danger"{% endif %}>

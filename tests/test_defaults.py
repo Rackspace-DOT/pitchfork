@@ -4,6 +4,7 @@ import os
 import sys
 import types
 import unittest
+from copy import deepcopy
 
 try:
     import importlib.util
@@ -32,6 +33,12 @@ HELPER_PATH = os.path.join(
     '..',
     'pitchfork',
     'helper.py'
+)
+MODELS_PATH = os.path.join(
+    os.path.dirname(__file__),
+    '..',
+    'pitchfork',
+    'models.py'
 )
 
 if importlib is not None:
@@ -111,6 +118,19 @@ def load_helper_module():
                 sys.modules.pop(name, None)
 
 
+def load_models_module():
+    if importlib is None:
+        return imp.load_source('pitchfork_models_for_tests', MODELS_PATH)
+
+    spec = importlib.util.spec_from_file_location(
+        'pitchfork_models_for_tests',
+        MODELS_PATH
+    )
+    models = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(models)
+    return models
+
+
 class FakeCollection(object):
     def __init__(self, docs=None):
         self.docs = docs or []
@@ -136,12 +156,13 @@ class FakeCollection(object):
 
     def update(self, query, update):
         self.updated.append((query, update))
-        if not self.docs:
+        doc = self.find_one(query)
+        if doc is None:
             return
         set_values = update.get('$set', {})
         for key, value in set_values.items():
             parts = key.split('.')
-            target = self.docs[0]
+            target = doc
             for part in parts[:-1]:
                 target = target.setdefault(part, {})
             target[parts[-1]] = value
@@ -182,6 +203,20 @@ class FakeDb(object):
 
 
 class DefaultsTests(unittest.TestCase):
+    def rackconnect_docs_with_pr67_bulk_calls(self):
+        docs = deepcopy(defaults.RACKCONNECT_EXTRA_API_CALLS)
+        for doc in docs:
+            key = (doc.get('verb'), doc.get('api_uri'))
+            if key not in defaults.RACKCONNECT_BULK_API_CALL_KEYS:
+                continue
+            for variable in doc.get('variables'):
+                variable['duplicate'] = False
+                variable['duplicate_group'] = ''
+            doc['data_object'] = doc.get('data_object').split('    },')[0] + (
+                '    }\r\n]'
+            )
+        return docs
+
     def test_ensure_default_api_calls_adds_monitoring_private_zone_call(self):
         db = FakeDb()
 
@@ -312,6 +347,67 @@ class DefaultsTests(unittest.TestCase):
         ]
         self.assertEqual(duplicate_calls, [])
 
+    def test_updates_existing_rackconnect_bulk_calls(self):
+        docs = self.rackconnect_docs_with_pr67_bulk_calls()
+        db = FakeDb(rackconnect_docs=docs)
+
+        defaults.ensure_default_api_calls(db)
+
+        self.assertEqual(db.rack_connect.inserted, [])
+        self.assertEqual(len(db.rack_connect.updated), 4)
+        updated = db.rack_connect.find_one({
+            'api_uri': '/v3/{ddi}/load_balancer_pools/nodes',
+            'verb': 'POST'
+        })
+        variables = updated.get('variables')
+        self.assertTrue(variables[0].get('duplicate'))
+        self.assertEqual(
+            variables[0].get('duplicate_group'),
+            'load_balancer_pool_nodes'
+        )
+        self.assertEqual(
+            variables[1].get('duplicate_group'),
+            'load_balancer_pool_nodes'
+        )
+        self.assertIn('cloud_server_id_2', updated.get('data_object'))
+
+    def test_updates_only_allowlisted_rackconnect_bulk_calls(self):
+        server_groups = {
+            'api_uri': '/v3/{ddi}/server_groups',
+            'verb': 'GET',
+            'title': 'Custom Admin Title',
+            'variables': [],
+            'data_object': 'custom'
+        }
+        bulk_call = {
+            'api_uri': '/v3/{ddi}/server_groups/nodes',
+            'verb': 'DELETE',
+            'title': 'Remove Nodes from Server Groups',
+            'variables': [
+                {
+                    'variable_name': 'cloud_server_id',
+                    'duplicate': False,
+                    'duplicate_group': ''
+                }, {
+                    'variable_name': 'server_group_id',
+                    'duplicate': False,
+                    'duplicate_group': ''
+                }
+            ],
+            'data_object': 'custom bulk'
+        }
+        db = FakeDb(rackconnect_docs=[server_groups, bulk_call])
+
+        defaults.sync_rackconnect_bulk_api_calls(db)
+
+        self.assertEqual(server_groups.get('title'), 'Custom Admin Title')
+        self.assertEqual(server_groups.get('data_object'), 'custom')
+        self.assertEqual(len(db.rack_connect.updated), 1)
+        self.assertEqual(
+            bulk_call.get('variables')[0].get('duplicate_group'),
+            'server_group_nodes'
+        )
+
     def test_rackconnect_extra_calls_use_pitchfork_endpoint_shape(self):
         for call in defaults.RACKCONNECT_EXTRA_API_CALLS:
             self.assertTrue(call.get('api_uri').startswith('/v3/{ddi}/'))
@@ -360,6 +456,106 @@ class DefaultsTests(unittest.TestCase):
             if isinstance(data, list):
                 data = data[0]
             self.assertEqual(data.get('cloud_ddi_account'), 123456)
+
+    def test_bulk_load_balancer_pool_nodes_render_multiple_rows(self):
+        helper = load_helper_module()
+        call = next(
+            call for call in defaults.RACKCONNECT_EXTRA_API_CALLS
+            if call.get('title') == 'Add Nodes to Load Balancer Pools'
+        )
+        json_data = {
+            'cloud_server_id': 'server-0',
+            'port': '80',
+            'load_balancer_pool_id': 'pool-0',
+            'cloud_server_id_1': 'server-1',
+            'port_1': '81',
+            'load_balancer_pool_id_1': 'pool-1'
+        }
+
+        data = helper.process_api_data_request(call, json_data)
+
+        self.assertEqual(len(data), 2)
+        self.assertEqual(data[0].get('port'), 80)
+        self.assertEqual(data[1].get('port'), 81)
+        self.assertEqual(
+            data[1].get('cloud_server').get('id'),
+            'server-1'
+        )
+        self.assertEqual(
+            data[1].get('load_balancer_pool').get('id'),
+            'pool-1'
+        )
+
+    def test_bulk_server_group_nodes_render_three_rows(self):
+        helper = load_helper_module()
+        call = next(
+            call for call in defaults.RACKCONNECT_EXTRA_API_CALLS
+            if call.get('title') == 'Remove Nodes from Server Groups'
+        )
+        json_data = {
+            'cloud_server_id': 'server-0',
+            'server_group_id': 'group-0',
+            'cloud_server_id_1': 'server-1',
+            'server_group_id_1': 'group-1',
+            'cloud_server_id_2': 'server-2',
+            'server_group_id_2': 'group-2'
+        }
+
+        data = helper.process_api_data_request(call, json_data)
+
+        self.assertEqual(
+            [
+                item.get('cloud_server').get('id')
+                for item in data
+            ],
+            ['server-0', 'server-1', 'server-2']
+        )
+        self.assertEqual(
+            [
+                item.get('server_group').get('id')
+                for item in data
+            ],
+            ['group-0', 'group-1', 'group-2']
+        )
+
+    def test_bulk_rackconnect_variables_are_grouped_duplicates(self):
+        calls = [
+            call for call in defaults.RACKCONNECT_EXTRA_API_CALLS
+            if call.get('title') in [
+                'Add Nodes to Load Balancer Pools',
+                'Remove Nodes from Load Balancer Pools',
+                'Add Nodes to Server Groups',
+                'Remove Nodes from Server Groups'
+            ]
+        ]
+
+        self.assertEqual(len(calls), 4)
+        for call in calls:
+            variables = call.get('variables')
+            self.assertTrue(variables[0].get('duplicate'))
+            self.assertTrue(variables[0].get('duplicate_group'))
+            self.assertTrue(all(
+                var.get('duplicate_group') ==
+                variables[0].get('duplicate_group')
+                for var in variables
+            ))
+
+    def test_variable_preserves_duplicate_metadata(self):
+        models = load_models_module()
+
+        variable = models.Variable({
+            'variable_name': 'cloud_server_id',
+            'field_type': 'text',
+            'duplicate': True,
+            'duplicate_group': 'load_balancer_pool_nodes',
+            'id_value': 0
+        })
+
+        self.assertTrue(variable.__dict__.get('duplicate'))
+        self.assertEqual(
+            variable.__dict__.get('duplicate_group'),
+            'load_balancer_pool_nodes'
+        )
 
 
 if __name__ == '__main__':

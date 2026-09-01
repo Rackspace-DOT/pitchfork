@@ -103,6 +103,7 @@ class CallVariables(Form):
     description = fields.TextField('Short Description:')
     required = fields.BooleanField('Required:')
     duplicate = fields.BooleanField('Allow Duplicate:', default=False)
+    duplicate_group = fields.TextField('Duplicate Group:')
     id_value = fields.HiddenField('id_value', default=0)
 
 

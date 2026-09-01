@@ -25,11 +25,14 @@ def _call_variable(
     required=True,
     id_value=0,
     field_display='TextField',
-    field_display_data=''
+    field_display_data='',
+    duplicate=False,
+    duplicate_group=''
 ):
     return {
         'description': description,
-        'duplicate': False,
+        'duplicate': duplicate,
+        'duplicate_group': duplicate_group,
         'field_display': field_display,
         'field_display_data': field_display_data,
         'field_type': field_type,
@@ -100,6 +103,13 @@ RACKCONNECT_GROUPS = [
     }
 ]
 
+RACKCONNECT_BULK_API_CALL_KEYS = [
+    ('POST', '/v3/{ddi}/load_balancer_pools/nodes'),
+    ('DELETE', '/v3/{ddi}/load_balancer_pools/nodes'),
+    ('POST', '/v3/{ddi}/server_groups/nodes'),
+    ('DELETE', '/v3/{ddi}/server_groups/nodes')
+]
+
 
 RACKCONNECT_EXTRA_API_CALLS = [
     _rackconnect_call(
@@ -112,18 +122,22 @@ RACKCONNECT_EXTRA_API_CALLS = [
             _call_variable(
                 'cloud_server_id',
                 'Cloud Server UUID',
-                id_value=0
+                id_value=0,
+                duplicate=True,
+                duplicate_group='load_balancer_pool_nodes'
             ),
             _call_variable(
                 'port',
                 'Load balancer pool node port',
                 field_type='integer',
-                id_value=1
+                id_value=1,
+                duplicate_group='load_balancer_pool_nodes'
             ),
             _call_variable(
                 'load_balancer_pool_id',
                 'Load balancer pool UUID',
-                id_value=2
+                id_value=2,
+                duplicate_group='load_balancer_pool_nodes'
             )
         ],
         (
@@ -135,6 +149,24 @@ RACKCONNECT_EXTRA_API_CALLS = [
             '        "port": "{port}",\r\n'
             '        "load_balancer_pool": {\r\n'
             '            "id": "{load_balancer_pool_id}"\r\n'
+            '        }\r\n'
+            '    },\r\n'
+            '    {\r\n'
+            '        "cloud_server": {\r\n'
+            '            "id": "{cloud_server_id_1}"\r\n'
+            '        },\r\n'
+            '        "port": "{port_1}",\r\n'
+            '        "load_balancer_pool": {\r\n'
+            '            "id": "{load_balancer_pool_id_1}"\r\n'
+            '        }\r\n'
+            '    },\r\n'
+            '    {\r\n'
+            '        "cloud_server": {\r\n'
+            '            "id": "{cloud_server_id_2}"\r\n'
+            '        },\r\n'
+            '        "port": "{port_2}",\r\n'
+            '        "load_balancer_pool": {\r\n'
+            '            "id": "{load_balancer_pool_id_2}"\r\n'
             '        }\r\n'
             '    }\r\n'
             ']'
@@ -151,12 +183,15 @@ RACKCONNECT_EXTRA_API_CALLS = [
             _call_variable(
                 'cloud_server_id',
                 'Cloud Server UUID',
-                id_value=0
+                id_value=0,
+                duplicate=True,
+                duplicate_group='load_balancer_pool_nodes'
             ),
             _call_variable(
                 'load_balancer_pool_id',
                 'Load balancer pool UUID',
-                id_value=1
+                id_value=1,
+                duplicate_group='load_balancer_pool_nodes'
             )
         ],
         (
@@ -167,6 +202,22 @@ RACKCONNECT_EXTRA_API_CALLS = [
             '        },\r\n'
             '        "load_balancer_pool": {\r\n'
             '            "id": "{load_balancer_pool_id}"\r\n'
+            '        }\r\n'
+            '    },\r\n'
+            '    {\r\n'
+            '        "cloud_server": {\r\n'
+            '            "id": "{cloud_server_id_1}"\r\n'
+            '        },\r\n'
+            '        "load_balancer_pool": {\r\n'
+            '            "id": "{load_balancer_pool_id_1}"\r\n'
+            '        }\r\n'
+            '    },\r\n'
+            '    {\r\n'
+            '        "cloud_server": {\r\n'
+            '            "id": "{cloud_server_id_2}"\r\n'
+            '        },\r\n'
+            '        "load_balancer_pool": {\r\n'
+            '            "id": "{load_balancer_pool_id_2}"\r\n'
             '        }\r\n'
             '    }\r\n'
             ']'
@@ -367,12 +418,15 @@ RACKCONNECT_EXTRA_API_CALLS = [
             _call_variable(
                 'cloud_server_id',
                 'Cloud Server UUID',
-                id_value=0
+                id_value=0,
+                duplicate=True,
+                duplicate_group='server_group_nodes'
             ),
             _call_variable(
                 'server_group_id',
                 'Server group UUID',
-                id_value=1
+                id_value=1,
+                duplicate_group='server_group_nodes'
             )
         ],
         (
@@ -383,6 +437,22 @@ RACKCONNECT_EXTRA_API_CALLS = [
             '        },\r\n'
             '        "server_group": {\r\n'
             '            "id": "{server_group_id}"\r\n'
+            '        }\r\n'
+            '    },\r\n'
+            '    {\r\n'
+            '        "cloud_server": {\r\n'
+            '            "id": "{cloud_server_id_1}"\r\n'
+            '        },\r\n'
+            '        "server_group": {\r\n'
+            '            "id": "{server_group_id_1}"\r\n'
+            '        }\r\n'
+            '    },\r\n'
+            '    {\r\n'
+            '        "cloud_server": {\r\n'
+            '            "id": "{cloud_server_id_2}"\r\n'
+            '        },\r\n'
+            '        "server_group": {\r\n'
+            '            "id": "{server_group_id_2}"\r\n'
             '        }\r\n'
             '    }\r\n'
             ']'
@@ -399,12 +469,15 @@ RACKCONNECT_EXTRA_API_CALLS = [
             _call_variable(
                 'cloud_server_id',
                 'Cloud Server UUID',
-                id_value=0
+                id_value=0,
+                duplicate=True,
+                duplicate_group='server_group_nodes'
             ),
             _call_variable(
                 'server_group_id',
                 'Server group UUID',
-                id_value=1
+                id_value=1,
+                duplicate_group='server_group_nodes'
             )
         ],
         (
@@ -415,6 +488,22 @@ RACKCONNECT_EXTRA_API_CALLS = [
             '        },\r\n'
             '        "server_group": {\r\n'
             '            "id": "{server_group_id}"\r\n'
+            '        }\r\n'
+            '    },\r\n'
+            '    {\r\n'
+            '        "cloud_server": {\r\n'
+            '            "id": "{cloud_server_id_1}"\r\n'
+            '        },\r\n'
+            '        "server_group": {\r\n'
+            '            "id": "{server_group_id_1}"\r\n'
+            '        }\r\n'
+            '    },\r\n'
+            '    {\r\n'
+            '        "cloud_server": {\r\n'
+            '            "id": "{cloud_server_id_2}"\r\n'
+            '        },\r\n'
+            '        "server_group": {\r\n'
+            '            "id": "{server_group_id_2}"\r\n'
             '        }\r\n'
             '    }\r\n'
             ']'
@@ -770,6 +859,7 @@ MONITORING_PRIVATE_ZONE_CALL = {
 def ensure_default_api_calls(db):
     ensure_api_call(db.monitoring, MONITORING_PRIVATE_ZONE_CALL)
     ensure_product_groups(db, 'rackconnect', RACKCONNECT_GROUPS)
+    sync_rackconnect_bulk_api_calls(db)
     for api_call in RACKCONNECT_EXTRA_API_CALLS:
         ensure_api_call(db.rack_connect, api_call)
 
@@ -781,6 +871,29 @@ def ensure_api_call(collection, api_call):
     }
     if collection.find_one(query) is None:
         collection.insert(deepcopy(api_call))
+
+
+def sync_rackconnect_bulk_api_calls(db):
+    for api_call in RACKCONNECT_EXTRA_API_CALLS:
+        key = (api_call.get('verb'), api_call.get('api_uri'))
+        if key not in RACKCONNECT_BULK_API_CALL_KEYS:
+            continue
+
+        query = {
+            'api_uri': api_call.get('api_uri'),
+            'verb': api_call.get('verb')
+        }
+        if db.rack_connect.find_one(query) is None:
+            continue
+
+        db.rack_connect.update(
+            query, {
+                '$set': {
+                    'data_object': deepcopy(api_call.get('data_object')),
+                    'variables': deepcopy(api_call.get('variables'))
+                }
+            }
+        )
 
 
 def ensure_product_groups(db, product_key, groups):

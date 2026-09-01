@@ -139,31 +139,101 @@
             $(this).find('form')[0].reset();
         });
 
+        function duplicate_field_count(field_name) {
+            // Grouped duplicate variables must not end in _<digit>.
+            var items = field_name.split('_');
+            var count = parseInt(items[items.length -1]);
+            return isNaN(count) ? 0 : count;
+        }
+
+        function duplicate_field_name(field_name, count) {
+            var items = field_name.split('_');
+            if (count > 0) {
+                items.pop();
+            }
+            return items.join('_') + '_' + (count + 1);
+        }
+
+        function duplicate_group_rows(table, group_name, count) {
+            return table.find(
+                '.duplicate-group-row[data-duplicate-group="' +
+                group_name + '"]'
+            ).filter(function() {
+                var field = $(this).find(':input:visible').first();
+                return duplicate_field_count(field.attr('name')) === count;
+            });
+        }
+
+        function update_duplicate_field(row, count) {
+            var field = row.find(':input:visible').first();
+            var next_name = duplicate_field_name(field.attr('name'), count);
+            field.attr('name', next_name);
+            field.attr('id', next_name);
+            field.val('');
+            row.find('.variable-name-cell').text(next_name);
+        }
+
+        function add_duplicate_group(button, group_name) {
+            var parent_row = button.closest('tr');
+            var current_name = parent_row.find(':input:visible').first().attr('name');
+            var count = duplicate_field_count(current_name);
+
+            if (count >= 2) {
+                return;
+            }
+
+            var group_rows = duplicate_group_rows(
+                parent_row.closest('table'),
+                group_name,
+                count
+            );
+            var clone_rows = group_rows.clone(true);
+
+            group_rows.find('.duplicate-field').hide();
+            clone_rows.each(function() {
+                update_duplicate_field($(this), count);
+            });
+
+            var duplicate = clone_rows.find('.duplicate-field');
+            if ((count + 1) === 2) {
+                duplicate.hide();
+            } else {
+                duplicate.show();
+                duplicate.attr('title', 'Add Row');
+                duplicate.removeAttr('data-original-title');
+            }
+
+            group_rows.last().after(clone_rows);
+            $('.tooltip-title').tooltip();
+        }
+
         $('.duplicate-field').on('click', function() {
             $(this).tooltip('destroy');
+            var duplicate_group = $(this).data('duplicate-group');
+            if (duplicate_group) {
+                add_duplicate_group($(this), duplicate_group);
+                return;
+            }
+
             var parent_row = $(this).parent().parent();
-            var orig_input = parent_row.find('input');
             var clone_row = $(this).parent().parent().clone(true);
             var current_name = parent_row.find('input').attr('name');
             var items = current_name.split('_');
             var count = parseInt(items[items.length -1]);
             if (count < 2 || isNaN(count)) {
-                if (parseInt(items[items.length -1])) {
-                    items.pop();
-                    clone_row.find('input').attr('name', items.join('_') + '_' + (count + 1));
-                    clone_row.find('input').attr('id', items.join('_') + '_' + (count + 1));
-                } else {
-                    clone_row.find('input').attr('name', items.join('_') + '_1');
-                    clone_row.find('input').attr('id', items.join('_') + '_1');
-                }
+                var field_count = duplicate_field_count(current_name);
+                var next_name = duplicate_field_name(current_name, field_count);
+                clone_row.find('input').attr('name', next_name);
+                clone_row.find('input').attr('id', next_name);
                 clone_row.find('input').val('');
+                clone_row.find('.variable-name-cell').text(next_name);
                 $(this).hide();
 
                 var duplicate = clone_row.find('.duplicate-field');
                 if ((count + 1) === 2) {
                     duplicate.hide();
                 } else {
-                    duplicate.attr('title', 'Add Network');
+                    duplicate.attr('title', 'Add Row');
                     duplicate.removeAttr('data-original-title');
                 }
                 parent_row.after(clone_row);
