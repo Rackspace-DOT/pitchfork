@@ -164,6 +164,17 @@ class DuplicateRowLimitTests(unittest.TestCase):
         self.assertEqual(self.duplicate_row_limit(call, ''), 0)
         self.assertEqual(self.duplicate_row_limit(call, None), 0)
 
+    def test_uri_placeholders_count_for_bodyless_calls(self):
+        call = {
+            'api_uri': '/servers/{server_id}/networks/{network_uuid}'
+                       '/{network_uuid_1}/{network_uuid_2}',
+            'data_object': ''
+        }
+
+        self.assertEqual(
+            self.duplicate_row_limit(call, 'network_uuid'), 2
+        )
+
     def test_limit_is_per_variable(self):
         """A variable with no slots of its own must not borrow another's.
 
@@ -217,16 +228,32 @@ class DuplicateRowLimitTests(unittest.TestCase):
 
     def test_multi_digit_suffixes_are_read_whole(self):
         """A wider body must not be read as a single digit."""
+        slots = ['"{node}"']
+        slots.extend(
+            '"{node_%d}"' % index for index in range(1, 13)
+        )
         call = {
-            'data_object': (
-                '{"a": "{node_1}", "b": "{node_9}", "c": "{node_12}"}'
-            )
+            'data_object': '{"a": [%s]}' % ','.join(slots)
         }
 
         self.assertEqual(self.duplicate_row_limit(call, 'node'), 12)
 
+    def test_gaps_stop_at_the_last_contiguous_suffix(self):
+        call = {
+            'data_object': (
+                '{"a": "{node}", "b": "{node_1}", "c": "{node_3}"}'
+            )
+        }
+
+        self.assertEqual(self.duplicate_row_limit(call, 'node'), 1)
+
     def test_regex_characters_in_a_variable_name_are_literal(self):
-        call = {'data_object': '{"a": "{od.d+_3}"}'}
+        call = {
+            'data_object': (
+                '{"a": "{od.d+}", "b": "{od.d+_1}", '
+                '"c": "{od.d+_2}", "d": "{od.d+_3}"}'
+            )
+        }
 
         self.assertEqual(self.duplicate_row_limit(call, 'od.d+'), 3)
         self.assertEqual(self.duplicate_row_limit(call, 'odxdx'), 0)

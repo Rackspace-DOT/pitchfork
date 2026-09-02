@@ -175,9 +175,8 @@
             row.find('.variable-name-cell').text(next_name);
         }
 
-        /* How many rows the request body can hold, read off the button. The
-         * body is the real limit: process_api_data_request drops a row whose
-         * placeholder is not in data_object. */
+        /* How many rows the request can hold, read off the button. Stored
+         * placeholders are the real limit: extra rows are otherwise dropped. */
         function duplicate_group_max(button) {
             return parseInt(button.attr('data-duplicate-max'), 10) || 0;
         }
@@ -257,6 +256,7 @@
             }
 
             var clone_rows = group_rows.clone(true);
+            clone_rows.find('.tooltip-title').removeData('bs.tooltip');
             clone_rows.each(function() {
                 update_duplicate_field($(this), highest);
             });
@@ -318,20 +318,16 @@
 
             var parent_row = $(this).parent().parent();
             var clone_row = $(this).parent().parent().clone(true);
-            var current_name = parent_row.find('input').attr('name');
-            var items = current_name.split('_');
-            var count = parseInt(items[items.length -1]);
-            if (count < 2 || isNaN(count)) {
-                var field_count = duplicate_field_count(current_name);
-                var next_name = duplicate_field_name(current_name, field_count);
-                clone_row.find('input').attr('name', next_name);
-                clone_row.find('input').attr('id', next_name);
-                clone_row.find('input').val('');
-                clone_row.find('.variable-name-cell').text(next_name);
+            var current_name = parent_row.find(':input').first().attr('name');
+            var max_index = duplicate_group_max($(this));
+            var field_count = duplicate_field_count(current_name);
+            if (field_count < max_index) {
+                clone_row.find('.tooltip-title').removeData('bs.tooltip');
+                update_duplicate_field(clone_row, field_count);
                 $(this).hide();
 
                 var duplicate = clone_row.find('.duplicate-field');
-                if ((count + 1) === 2) {
+                if ((field_count + 1) >= max_index) {
                     duplicate.hide();
                 } else {
                     duplicate.attr('title', 'Add Row');

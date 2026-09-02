@@ -482,11 +482,6 @@ def process_api_data_request(api_call, json_data):
         else:
             return m.group(1)
 
-    def evaluate_scalar_replace(m):
-        if json_data.get(m.group(2)):
-            return json_data.get(m.group(2)).strip()
-        return ''
-
     if api_call.get('required_key'):
         req_key = api_call.get('required_key_name')
         if api_call.get('required_key_type') == 'dict':
@@ -538,13 +533,21 @@ def process_api_data_request(api_call, json_data):
                 temp_list.append(value)
 
         return temp_list
+    elif isinstance(temp_json, basestring):
+        missing_value = [False]
+
+        def evaluate_scalar_replace(m):
+            if json_data.get(m.group(1)):
+                return json_data.get(m.group(1)).strip()
+            missing_value[0] = True
+            return ''
+
+        value = re.sub(r'\{([^{}]+?)\}', evaluate_scalar_replace, temp_json)
+        if missing_value[0]:
+            return None
+        return value
     else:
-        value = re.sub(
-            r'("\{(.+?)\}")',
-            evaluate_scalar_replace,
-            data_object
-        )
-        return value or None
+        return temp_json
 
 
 def create_custom_header(api_call, request):

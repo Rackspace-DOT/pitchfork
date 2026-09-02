@@ -33,11 +33,11 @@ def utility_processor():
         """Highest row index this call's request body can actually hold.
 
         The duplicate-row UI names cloned inputs <variable>_1, <variable>_2,
-        and so on, but process_api_data_request only fills placeholders that
-        already exist in data_object -- a row with no matching placeholder is
-        silently dropped from the request. So the body is what really caps the
-        rows, and reading the cap back off it keeps the two from drifting
-        apart. A body carrying {x} ... {x_9} returns 9, allowing ten rows.
+        and so on, but request builders only fill placeholders that already
+        exist in data_object or api_uri -- a row with no matching placeholder
+        is silently dropped from the request. So stored placeholders are what
+        really cap the rows. A call carrying {x} ... {x_9} returns 9, allowing
+        ten rows.
 
         Returns 0 when nothing can be cloned, which is the signal not to offer
         the controls at all.
@@ -45,15 +45,26 @@ def utility_processor():
         if not variable_name:
             return 0
 
-        data_object = api_call.get('data_object') or ''
+        source = ''.join([
+            api_call.get('data_object') or '',
+            api_call.get('api_uri') or ''
+        ])
         suffixes = re.findall(
             r'\{%s_(\d+)\}' % re.escape(variable_name),
-            data_object
+            source
         )
         if not suffixes:
             return 0
 
-        return max(int(suffix) for suffix in suffixes)
+        if not re.search(r'\{%s\}' % re.escape(variable_name), source):
+            return 0
+
+        available = set(int(suffix) for suffix in suffixes)
+        index = 0
+        while index + 1 in available:
+            index += 1
+
+        return index
 
     def duplicate_group_row_limit(api_call, variable):
         """Highest row index every member of a duplicate group can hold."""

@@ -388,6 +388,27 @@ test('grouped: cloned select fields remain serializable', function() {
     );
 });
 
+test('grouped: cloned tooltips do not share source tooltip data', function() {
+    var window = load(
+        variablesTable(loadBalancerPoolRows(), BULK_MAX_INDEX)
+    );
+    window.eval(
+        'jQuery(".duplicate-field").first()' +
+        '.data("bs.tooltip", {$element: "source"})'
+    );
+
+    clickAndAssertProgress(window, 'tooltip clone click');
+
+    assert.equal(
+        window.eval(
+            'jQuery(".duplicate-field").last().data("bs.tooltip") === ' +
+            'undefined'
+        ),
+        true,
+        'cloned tooltip data should be rebuilt for the clone'
+    );
+});
+
 test('grouped: the cap comes from data-duplicate-max', function() {
     /* A body with only {x}, {x_1}, {x_2} advertises max 2, so three rows. */
     var window = load(variablesTable(loadBalancerPoolRows(), 2));
@@ -610,6 +631,58 @@ test('legacy: ungrouped duplicates still clone one row at a time', function() {
     );
 
     assert.equal(clickPlus(window), 'none', 'capped at three rows');
+});
+
+test('legacy: ungrouped duplicates honor a smaller cap', function() {
+    var window = load(
+        variablesTable([{name: 'network_uuid', plus: true}], 1)
+    );
+
+    clickAndAssertProgress(window, 'first click');
+    assert.deepEqual(
+        inputNames(window), ['network_uuid', 'network_uuid_1'],
+        'only one clone is allowed'
+    );
+    assert.equal(clickPlus(window), 'none', 'stops at data-duplicate-max');
+});
+
+test('legacy: ungrouped duplicates honor a larger cap', function() {
+    var window = load(
+        variablesTable([{name: 'network_uuid', plus: true}], 5)
+    );
+
+    for (var i = 1; i <= 5; i++) {
+        clickAndAssertProgress(window, 'click ' + i);
+    }
+
+    assert.deepEqual(
+        inputNames(window),
+        ['network_uuid', 'network_uuid_1', 'network_uuid_2',
+         'network_uuid_3', 'network_uuid_4', 'network_uuid_5'],
+        'larger bodies can expose every stored slot'
+    );
+    assert.equal(clickPlus(window), 'none', 'stops at the larger cap');
+});
+
+test('legacy: cloned tooltips do not share source tooltip data', function() {
+    var window = load(
+        variablesTable([{name: 'network_uuid', plus: true}], 2)
+    );
+    window.eval(
+        'jQuery(".duplicate-field").first()' +
+        '.data("bs.tooltip", {$element: "source"})'
+    );
+
+    clickAndAssertProgress(window, 'tooltip clone click');
+
+    assert.equal(
+        window.eval(
+            'jQuery(".duplicate-field").last().data("bs.tooltip") === ' +
+            'undefined'
+        ),
+        true,
+        'cloned tooltip data should be rebuilt for the clone'
+    );
 });
 
 test('legacy: ungrouped duplicates get no "-"', function() {

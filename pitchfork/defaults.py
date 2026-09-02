@@ -64,7 +64,6 @@ def _bulk_data_object(fields, count=BULK_ROW_COUNT):
 
 LOAD_BALANCER_POOL_NODE_FIELDS = [
     (('cloud_server', 'id'), 'cloud_server_id'),
-    (('port',), 'port'),
     (('load_balancer_pool', 'id'), 'load_balancer_pool_id')
 ]
 
@@ -190,16 +189,9 @@ RACKCONNECT_EXTRA_API_CALLS = [
                 duplicate_group='load_balancer_pool_nodes'
             ),
             _call_variable(
-                'port',
-                'Load balancer pool node port',
-                field_type='integer',
-                id_value=1,
-                duplicate_group='load_balancer_pool_nodes'
-            ),
-            _call_variable(
                 'load_balancer_pool_id',
                 'Load balancer pool UUID',
-                id_value=2,
+                id_value=1,
                 duplicate_group='load_balancer_pool_nodes'
             )
         ],

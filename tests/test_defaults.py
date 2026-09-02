@@ -503,6 +503,27 @@ class DefaultsTests(unittest.TestCase):
 
         self.assertIsNone(helper.process_api_data_request(call, {}))
 
+    def test_scalar_data_object_replaces_multiple_placeholders(self):
+        helper = load_helper_module()
+        call = {'data_object': '"{ddi}-{region}"'}
+
+        self.assertEqual(
+            helper.process_api_data_request(
+                call,
+                {'ddi': '12345', 'region': 'DFW'}
+            ),
+            '12345-DFW'
+        )
+
+    def test_scalar_data_object_replaces_embedded_placeholder(self):
+        helper = load_helper_module()
+        call = {'data_object': '"prefix-{ddi}"'}
+
+        self.assertEqual(
+            helper.process_api_data_request(call, {'ddi': '12345'}),
+            'prefix-12345'
+        )
+
     def test_scalar_data_object_keeps_backslashes_literal(self):
         helper = load_helper_module()
         call = {'data_object': '"{ddi}"'}
@@ -534,18 +555,16 @@ class DefaultsTests(unittest.TestCase):
         )
         json_data = {
             'cloud_server_id': 'server-0',
-            'port': '80',
             'load_balancer_pool_id': 'pool-0',
             'cloud_server_id_1': 'server-1',
-            'port_1': '81',
             'load_balancer_pool_id_1': 'pool-1'
         }
 
         data = helper.process_api_data_request(call, json_data)
 
         self.assertEqual(len(data), 2)
-        self.assertEqual(data[0].get('port'), 80)
-        self.assertEqual(data[1].get('port'), 81)
+        self.assertNotIn('port', data[0])
+        self.assertNotIn('port', data[1])
         self.assertEqual(
             data[1].get('cloud_server').get('id'),
             'server-1'
@@ -650,15 +669,12 @@ class DefaultsTests(unittest.TestCase):
             [
                 {
                     'cloud_server': {'id': '{cloud_server_id}'},
-                    'port': '{port}',
                     'load_balancer_pool': {'id': '{load_balancer_pool_id}'}
                 }, {
                     'cloud_server': {'id': '{cloud_server_id_1}'},
-                    'port': '{port_1}',
                     'load_balancer_pool': {'id': '{load_balancer_pool_id_1}'}
                 }, {
                     'cloud_server': {'id': '{cloud_server_id_2}'},
-                    'port': '{port_2}',
                     'load_balancer_pool': {'id': '{load_balancer_pool_id_2}'}
                 }
             ]
@@ -681,7 +697,6 @@ class DefaultsTests(unittest.TestCase):
         for index in range(defaults.BULK_ROW_COUNT):
             suffix = '' if index == 0 else '_%d' % index
             json_data['cloud_server_id' + suffix] = 'server-%d' % index
-            json_data['port' + suffix] = str(80 + index)
             json_data['load_balancer_pool_id' + suffix] = 'pool-%d' % index
 
         data = helper.process_api_data_request(call, json_data)
@@ -693,13 +708,10 @@ class DefaultsTests(unittest.TestCase):
              for index in range(defaults.BULK_ROW_COUNT)]
         )
 
-        """
-            check_variable_type falls back to the base variable for suffixed
-            names, so the tenth row's port must still be an integer.
-        """
         self.assertEqual(
-            [item.get('port') for item in data],
-            [80 + index for index in range(defaults.BULK_ROW_COUNT)]
+            [item.get('load_balancer_pool').get('id') for item in data],
+            ['pool-%d' % index
+             for index in range(defaults.BULK_ROW_COUNT)]
         )
 
     def test_variable_preserves_duplicate_metadata(self):
