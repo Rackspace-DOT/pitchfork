@@ -11,14 +11,24 @@ except Exception:
     import imp
 
 
-admin_defaults = types.ModuleType('flask_raxinternaladmin.defaults')
+admin_defaults = types.ModuleType('flask_cloudadmin.defaults')
 admin_defaults.check_and_initialize = lambda app, database: {
     'application_set': True
 }
-sys.modules['flask_raxinternaladmin'] = types.ModuleType(
-    'flask_raxinternaladmin'
-)
-sys.modules['flask_raxinternaladmin.defaults'] = admin_defaults
+sys.modules['flask_cloudadmin'] = types.ModuleType('flask_cloudadmin')
+sys.modules['flask_cloudadmin.defaults'] = admin_defaults
+
+config_module = types.ModuleType('config')
+
+
+class TestConfig(object):
+    ADMIN_USERNAME = 'admin'
+    ADMIN_NAME = 'Admin'
+    ADMIN_EMAIL = 'admin@example.com'
+
+
+config_module.config = TestConfig()
+sys.modules['config'] = config_module
 
 ROOT = os.path.join(os.path.dirname(__file__), '..')
 DEFAULTS_PATH = os.path.join(ROOT, 'pitchfork', 'defaults.py')
@@ -46,7 +56,7 @@ def load_duplicate_row_limit():
     utility_processor() only builds a dict of closures, so no application
     context is required to call it.
     """
-    stubbed = ['pitchfork', 'pitchfork.models']
+    stubbed = ['pitchfork', 'pitchfork.models', 'models']
     saved = {
         name: sys.modules[name] for name in stubbed if name in sys.modules
     }
@@ -59,6 +69,7 @@ def load_duplicate_row_limit():
         models = types.ModuleType('pitchfork.models')
         models.Product = object
         sys.modules['pitchfork.models'] = models
+        sys.modules['models'] = models
 
         functions = load_module(
             'pitchfork_template_functions_for_tests', FUNCTIONS_PATH

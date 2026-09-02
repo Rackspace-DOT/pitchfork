@@ -14,14 +14,24 @@ except Exception:
     import imp
 
 
-admin_defaults = types.ModuleType('flask_raxinternaladmin.defaults')
+admin_defaults = types.ModuleType('flask_cloudadmin.defaults')
 admin_defaults.check_and_initialize = lambda app, database: {
     'application_set': True
 }
-sys.modules['flask_raxinternaladmin'] = types.ModuleType(
-    'flask_raxinternaladmin'
-)
-sys.modules['flask_raxinternaladmin.defaults'] = admin_defaults
+sys.modules['flask_cloudadmin'] = types.ModuleType('flask_cloudadmin')
+sys.modules['flask_cloudadmin.defaults'] = admin_defaults
+
+config_module = types.ModuleType('config')
+
+
+class TestConfig(object):
+    ADMIN_USERNAME = 'admin'
+    ADMIN_NAME = 'Admin'
+    ADMIN_EMAIL = 'admin@example.com'
+
+
+config_module.config = TestConfig()
+sys.modules['config'] = config_module
 
 DEFAULTS_PATH = os.path.join(
     os.path.dirname(__file__),
@@ -54,15 +64,15 @@ else:
 
 
 def load_helper_module():
-    if importlib is None:
-        return imp.load_source('pitchfork_helper_for_tests', HELPER_PATH)
-
     module_names = [
         'pitchfork',
         'pitchfork.models',
         'pitchfork.forms',
         'pitchfork.cloud_dns_export',
-        'pitchfork.url_safety'
+        'pitchfork.url_safety',
+        'models',
+        'forms',
+        'url_safety'
     ]
     old_modules = {
         name: sys.modules[name] for name in module_names
@@ -77,7 +87,9 @@ def load_helper_module():
         models = types.ModuleType('pitchfork.models')
         models.Variable = object
         sys.modules['pitchfork.models'] = models
+        sys.modules['models'] = models
         sys.modules['pitchfork.forms'] = types.ModuleType('pitchfork.forms')
+        sys.modules['forms'] = sys.modules['pitchfork.forms']
         sys.modules['pitchfork.cloud_dns_export'] = types.ModuleType(
             'pitchfork.cloud_dns_export'
         )
@@ -103,6 +115,10 @@ def load_helper_module():
         ]:
             setattr(url_safety, name, noop)
         sys.modules['pitchfork.url_safety'] = url_safety
+        sys.modules['url_safety'] = url_safety
+
+        if importlib is None:
+            return imp.load_source('pitchfork_helper_for_tests', HELPER_PATH)
 
         spec = importlib.util.spec_from_file_location(
             'pitchfork_helper_for_tests',
