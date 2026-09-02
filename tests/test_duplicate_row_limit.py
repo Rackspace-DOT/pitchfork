@@ -48,8 +48,8 @@ def load_module(name, path):
 defaults = load_module('pitchfork_defaults_for_limit_tests', DEFAULTS_PATH)
 
 
-def load_duplicate_row_limit():
-    """Pull duplicate_row_limit out of the template context processor.
+def load_duplicate_helpers():
+    """Pull duplicate helpers out of the template context processor.
 
     template_functions imports pitchfork.models, which is not reachable
     without the internal admin package, so stub the one name it needs.
@@ -74,13 +74,21 @@ def load_duplicate_row_limit():
         functions = load_module(
             'pitchfork_template_functions_for_tests', FUNCTIONS_PATH
         )
-        return functions.utility_processor()['duplicate_row_limit']
+        helpers = functions.utility_processor()
+        return (
+            helpers['duplicate_row_limit'],
+            helpers['duplicate_group_row_limit']
+        )
     finally:
         for name in stubbed:
             if name in saved:
                 sys.modules[name] = saved[name]
             else:
                 sys.modules.pop(name, None)
+
+
+def load_duplicate_row_limit():
+    return load_duplicate_helpers()[0]
 
 
 class DuplicateRowLimitTests(unittest.TestCase):
@@ -93,7 +101,10 @@ class DuplicateRowLimitTests(unittest.TestCase):
     """
 
     def setUp(self):
-        self.duplicate_row_limit = load_duplicate_row_limit()
+        (
+            self.duplicate_row_limit,
+            self.duplicate_group_row_limit
+        ) = load_duplicate_helpers()
 
     def test_shipped_bulk_calls_advertise_every_row_the_body_holds(self):
         bulk_calls = [
@@ -170,6 +181,32 @@ class DuplicateRowLimitTests(unittest.TestCase):
             self.duplicate_row_limit(call, 'cloud_server_id'), 1
         )
         self.assertEqual(self.duplicate_row_limit(call, 'port'), 0)
+
+    def test_group_limit_uses_the_shortest_member(self):
+        call = {
+            'variables': [
+                {
+                    'variable_name': 'cloud_server_id',
+                    'duplicate_group': 'nodes'
+                }, {
+                    'variable_name': 'port',
+                    'duplicate_group': 'nodes'
+                }
+            ],
+            'data_object': (
+                '[{"a": "{cloud_server_id}", "b": "{port}"},'
+                ' {"a": "{cloud_server_id_1}", "b": "{port_1}"},'
+                ' {"a": "{cloud_server_id_2}"}]'
+            )
+        }
+
+        self.assertEqual(
+            self.duplicate_group_row_limit(
+                call,
+                call.get('variables')[0]
+            ),
+            1
+        )
 
     def test_prefix_matches_do_not_count(self):
         call = {'data_object': '{"a": "{cloud_server_id_extra_1}"}'}

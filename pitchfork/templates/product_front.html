@@ -167,7 +167,11 @@
             var next_name = duplicate_field_name(field.attr('name'), count);
             field.attr('name', next_name);
             field.attr('id', next_name);
-            field.val('');
+            if (field.is('select')) {
+                field.prop('selectedIndex', 0);
+            } else {
+                field.val('');
+            }
             row.find('.variable-name-cell').text(next_name);
         }
 
@@ -306,7 +310,7 @@
 
         $('.duplicate-field').on('click', function() {
             $(this).tooltip('destroy');
-            var duplicate_group = $(this).data('duplicate-group');
+            var duplicate_group = $(this).attr('data-duplicate-group');
             if (duplicate_group) {
                 add_duplicate_group($(this), duplicate_group);
                 return;

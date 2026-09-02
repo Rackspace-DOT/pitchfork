@@ -478,13 +478,14 @@ def process_api_data_request(api_call, json_data):
 
     def evaluate_replace(m):
         if json_data.get(m.group(2)):
-            return re.sub(
-                m.group(1),
-                json_data.get(m.group(2)).strip(),
-                m.group(0)
-            )
+            return json_data.get(m.group(2)).strip()
         else:
             return m.group(1)
+
+    def evaluate_scalar_replace(m):
+        if json_data.get(m.group(2)):
+            return json_data.get(m.group(2)).strip()
+        return ''
 
     if api_call.get('required_key'):
         req_key = api_call.get('required_key_name')
@@ -538,8 +539,12 @@ def process_api_data_request(api_call, json_data):
 
         return temp_list
     else:
-        value = re.sub(r'("\{(.+?)\}")', evaluate_replace, data_object)
-        return value
+        value = re.sub(
+            r'("\{(.+?)\}")',
+            evaluate_scalar_replace,
+            data_object
+        )
+        return value or None
 
 
 def create_custom_header(api_call, request):
@@ -730,6 +735,8 @@ def sanitize_data_for_mongo(data):
     for k, v in data.iteritems():
         if type(v) is not list:
             temp_dict[k] = re.sub(r'\.', '&#46;', v)
+        else:
+            temp_dict[k] = v
 
     return temp_dict
 

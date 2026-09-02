@@ -55,6 +55,23 @@ def utility_processor():
 
         return max(int(suffix) for suffix in suffixes)
 
+    def duplicate_group_row_limit(api_call, variable):
+        """Highest row index every member of a duplicate group can hold."""
+        variable = variable or {}
+        group_name = variable.get('duplicate_group')
+        if not group_name:
+            return duplicate_row_limit(api_call, variable.get('variable_name'))
+
+        limits = [
+            duplicate_row_limit(api_call, item.get('variable_name'))
+            for item in api_call.get('variables') or []
+            if item.get('duplicate_group') == group_name
+        ]
+        if not limits:
+            return 0
+
+        return min(limits)
+
     def slugify(data):
         temp_string = re.sub(' +', ' ', str(data.strip()))
         return re.sub(' ', '_', temp_string)
@@ -74,6 +91,7 @@ def utility_processor():
     return dict(
         parse_field_data=parse_field_data,
         duplicate_row_limit=duplicate_row_limit,
+        duplicate_group_row_limit=duplicate_group_row_limit,
         unslug=unslug,
         slugify=slugify,
         get_product_for_call=get_product_for_call,

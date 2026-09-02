@@ -155,14 +155,20 @@ function variablesTable(rows, maxIndex) {
                     ' style="display: none;"></a>';
             }
         }
+        var field = row.select
+            ? '<select id="' + row.name + '" name="' + row.name + '">' +
+              '<option value="">Choose</option>' +
+              '<option value="original" selected>Original</option>' +
+              '</select>'
+            : '<input id="' + row.name + '" name="' + row.name +
+              '" type="text">';
         return '<tr' + (isGroup
                 ? ' class="duplicate-group-row" data-duplicate-group="' +
                   row.group + '"'
                 : '') + '>' +
             '<td>' + controls + '</td>' +
             '<td class="variable-name-cell">' + row.name + '</td>' +
-            '<td><input id="' + row.name + '" name="' + row.name +
-            '" type="text"></td>' +
+            '<td>' + field + '</td>' +
             '</tr>';
     }).join('');
     return '<table id="t"><tbody>' + html + '</tbody></table>';
@@ -184,7 +190,7 @@ var BULK_MAX_INDEX = 9;
 
 function inputNames(window) {
     return window.eval(
-        'jQuery("#t input").map(function(){' +
+        'jQuery("#t :input").map(function(){' +
         ' return jQuery(this).attr("name"); }).get().join(",")'
     ).split(',').filter(Boolean);
 }
@@ -342,6 +348,43 @@ test('grouped: one click clones every row in the group', function() {
     assert.equal(
         visiblePlusCount(window), 1,
         'the source "+" is spent and the clone offers the next one'
+    );
+});
+
+test('grouped: numeric-looking group names clone normally', function() {
+    var window = load(variablesTable([
+        {name: 'cloud_server_id', group: '42', plus: true},
+        {name: 'port', group: '42'}
+    ], BULK_MAX_INDEX));
+
+    clickAndAssertProgress(window, 'numeric group click');
+
+    assert.deepEqual(
+        inputNames(window),
+        ['cloud_server_id', 'port', 'cloud_server_id_1', 'port_1'],
+        'numeric group names must not be type-coerced by jQuery.data()'
+    );
+});
+
+test('grouped: cloned select fields remain serializable', function() {
+    var window = load(variablesTable([
+        {name: 'cloud_server_id', group: 'nodes', plus: true},
+        {name: 'port', group: 'nodes', select: true}
+    ], BULK_MAX_INDEX));
+
+    clickAndAssertProgress(window, 'select clone click');
+
+    assert.equal(
+        window.eval(
+            'jQuery("#t select[name=port_1]").prop("selectedIndex")'
+        ),
+        0,
+        'cloned select should reset to its placeholder'
+    );
+    assert.ok(
+        window.eval('jQuery("#t :input").serialize()')
+            .indexOf('port_1=') !== -1,
+        'cloned select should be present in serialize()'
     );
 });
 

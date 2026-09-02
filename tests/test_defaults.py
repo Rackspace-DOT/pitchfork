@@ -387,6 +387,29 @@ class DefaultsTests(unittest.TestCase):
             'load_balancer_pool_nodes'
         )
         self.assertIn('cloud_server_id_2', updated.get('data_object'))
+        self.assertEqual(
+            updated.get('rackconnect_bulk_api_call_sync_version'),
+            defaults.BULK_API_CALL_SYNC_VERSION
+        )
+
+    def test_does_not_rewrite_synced_rackconnect_bulk_calls(self):
+        docs = self.rackconnect_docs_with_pr67_bulk_calls()
+        for doc in docs:
+            doc['rackconnect_bulk_api_call_sync_version'] = (
+                defaults.BULK_API_CALL_SYNC_VERSION
+            )
+            if doc.get('api_uri') == '/v3/{ddi}/load_balancer_pools/nodes':
+                doc['data_object'] = 'admin custom body'
+        db = FakeDb(rackconnect_docs=docs)
+
+        defaults.sync_rackconnect_bulk_api_calls(db)
+
+        updated = db.rack_connect.find_one({
+            'api_uri': '/v3/{ddi}/load_balancer_pools/nodes',
+            'verb': 'POST'
+        })
+        self.assertEqual(db.rack_connect.updated, [])
+        self.assertEqual(updated.get('data_object'), 'admin custom body')
 
     def test_updates_only_allowlisted_rackconnect_bulk_calls(self):
         server_groups = {
@@ -473,6 +496,35 @@ class DefaultsTests(unittest.TestCase):
             if isinstance(data, list):
                 data = data[0]
             self.assertEqual(data.get('cloud_ddi_account'), 123456)
+
+    def test_scalar_data_object_missing_value_renders_nothing(self):
+        helper = load_helper_module()
+        call = {'data_object': '"{ddi}"'}
+
+        self.assertIsNone(helper.process_api_data_request(call, {}))
+
+    def test_scalar_data_object_keeps_backslashes_literal(self):
+        helper = load_helper_module()
+        call = {'data_object': '"{ddi}"'}
+
+        self.assertEqual(
+            helper.process_api_data_request(call, {'ddi': r'abc\1'}),
+            r'abc\1'
+        )
+
+    def test_sanitize_data_for_mongo_preserves_lists(self):
+        helper = load_helper_module()
+
+        class CompatDict(dict):
+            def iteritems(self):
+                return self.items()
+
+        sanitized = helper.sanitize_data_for_mongo(
+            CompatDict({'ids': ['one.two'], 'name': 'a.b'})
+        )
+
+        self.assertEqual(sanitized.get('ids'), ['one.two'])
+        self.assertEqual(sanitized.get('name'), 'a&#46;b')
 
     def test_bulk_load_balancer_pool_nodes_render_multiple_rows(self):
         helper = load_helper_module()

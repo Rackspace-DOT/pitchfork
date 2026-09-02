@@ -29,6 +29,7 @@ import json
     Rows left blank are dropped from the array, so a wider body costs nothing.
 """
 BULK_ROW_COUNT = 10
+BULK_API_CALL_SYNC_VERSION = 1
 
 
 def _bulk_data_object(fields, count=BULK_ROW_COUNT):
@@ -834,14 +835,22 @@ def sync_rackconnect_bulk_api_calls(db):
             'api_uri': api_call.get('api_uri'),
             'verb': api_call.get('verb')
         }
-        if db.rack_connect.find_one(query) is None:
+        existing_call = db.rack_connect.find_one(query)
+        if existing_call is None:
+            continue
+        if existing_call.get(
+            'rackconnect_bulk_api_call_sync_version'
+        ) == BULK_API_CALL_SYNC_VERSION:
             continue
 
         db.rack_connect.update(
             query, {
                 '$set': {
                     'data_object': deepcopy(api_call.get('data_object')),
-                    'variables': deepcopy(api_call.get('variables'))
+                    'variables': deepcopy(api_call.get('variables')),
+                    'rackconnect_bulk_api_call_sync_version': (
+                        BULK_API_CALL_SYNC_VERSION
+                    )
                 }
             }
         )
