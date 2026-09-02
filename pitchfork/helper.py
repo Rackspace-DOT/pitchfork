@@ -482,6 +482,30 @@ def process_api_data_request(api_call, json_data):
         else:
             return m.group(1)
 
+    def variable_for_placeholder(name):
+        for var in api_call.get('variables') or []:
+            if var.get('variable_name') == name:
+                return var
+
+        base_name = re.match(r'(.+)_\d+$', name)
+        if base_name:
+            for var in api_call.get('variables') or []:
+                if var.get('variable_name') == base_name.group(1):
+                    return var
+
+        return {}
+
+    def has_missing_duplicate_group_value(item):
+        placeholders = re.findall(r'\{([^{}]+?)\}', json.dumps(item))
+        grouped = [
+            name for name in placeholders
+            if variable_for_placeholder(name).get('duplicate_group')
+        ]
+        if not grouped:
+            return False
+
+        return any(not json_data.get(name) for name in grouped)
+
     if api_call.get('required_key'):
         req_key = api_call.get('required_key_name')
         if api_call.get('required_key_type') == 'dict':
@@ -510,6 +534,8 @@ def process_api_data_request(api_call, json_data):
     elif isinstance(temp_json, list):
         for item in temp_json:
             if isinstance(item, dict):
+                if has_missing_duplicate_group_value(item):
+                    continue
                 temp_item_dict = {}
                 for key, value in item.iteritems():
                     if value:

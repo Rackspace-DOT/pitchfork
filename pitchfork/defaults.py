@@ -114,7 +114,7 @@ def _rackconnect_call(
     data_object='',
     use_data=False
 ):
-    return {
+    call = {
         'accessed': 0,
         'add_to_header': False,
         'allow_filter': False,
@@ -139,6 +139,11 @@ def _rackconnect_call(
         'variables': variables or [],
         'verb': verb
     }
+    if (verb, api_uri) in RACKCONNECT_BULK_API_CALL_KEYS:
+        call['rackconnect_bulk_api_call_sync_version'] = (
+            BULK_API_CALL_SYNC_VERSION
+        )
+    return call
 
 
 RACKCONNECT_GROUPS = [
@@ -803,9 +808,9 @@ MONITORING_PRIVATE_ZONE_CALL = {
 def ensure_default_api_calls(db):
     ensure_api_call(db.monitoring, MONITORING_PRIVATE_ZONE_CALL)
     ensure_product_groups(db, 'rackconnect', RACKCONNECT_GROUPS)
-    sync_rackconnect_bulk_api_calls(db)
     for api_call in RACKCONNECT_EXTRA_API_CALLS:
         ensure_api_call(db.rack_connect, api_call)
+    sync_rackconnect_bulk_api_calls(db)
 
 
 def ensure_api_call(collection, api_call):

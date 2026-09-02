@@ -174,12 +174,11 @@ function variablesTable(rows, maxIndex) {
     return '<table id="t"><tbody>' + html + '</tbody></table>';
 }
 
-/* "Add Nodes to Load Balancer Pools" -- three variables, one group. */
+/* "Add Nodes to Load Balancer Pools" -- two variables, one group. */
 function loadBalancerPoolRows() {
     return [
         {name: 'cloud_server_id', group: 'load_balancer_pool_nodes',
          plus: true},
-        {name: 'port', group: 'load_balancer_pool_nodes'},
         {name: 'load_balancer_pool_id', group: 'load_balancer_pool_nodes'}
     ];
 }
@@ -332,17 +331,17 @@ test('grouped: one click clones every row in the group', function() {
 
     clickAndAssertProgress(window, 'first click');
 
-    assert.equal(rowCount(window), 6, 'three base rows plus three clones');
+    assert.equal(rowCount(window), 4, 'two base rows plus two clones');
     assert.deepEqual(
         inputNames(window),
-        ['cloud_server_id', 'port', 'load_balancer_pool_id',
-         'cloud_server_id_1', 'port_1', 'load_balancer_pool_id_1'],
+        ['cloud_server_id', 'load_balancer_pool_id',
+         'cloud_server_id_1', 'load_balancer_pool_id_1'],
         'clone inputs are suffixed _1'
     );
     assert.deepEqual(
         rowLabels(window),
-        ['cloud_server_id', 'port', 'load_balancer_pool_id',
-         'cloud_server_id_1', 'port_1', 'load_balancer_pool_id_1'],
+        ['cloud_server_id', 'load_balancer_pool_id',
+         'cloud_server_id_1', 'load_balancer_pool_id_1'],
         'displayed parameter names track the input names'
     );
     assert.equal(
@@ -416,12 +415,12 @@ test('grouped: the cap comes from data-duplicate-max', function() {
     clickAndAssertProgress(window, 'first click');
     clickAndAssertProgress(window, 'second click');
 
-    assert.equal(rowCount(window), 9, 'three rows per group, three groups');
+    assert.equal(rowCount(window), 6, 'two rows per group, three groups');
     assert.deepEqual(
         inputNames(window),
-        ['cloud_server_id', 'port', 'load_balancer_pool_id',
-         'cloud_server_id_1', 'port_1', 'load_balancer_pool_id_1',
-         'cloud_server_id_2', 'port_2', 'load_balancer_pool_id_2'],
+        ['cloud_server_id', 'load_balancer_pool_id',
+         'cloud_server_id_1', 'load_balancer_pool_id_1',
+         'cloud_server_id_2', 'load_balancer_pool_id_2'],
         'a third association row is available'
     );
     assert.equal(
@@ -443,10 +442,10 @@ test('grouped: reaches ten rows when the body holds ten', function() {
         clickAndAssertProgress(window, 'click ' + i);
     }
 
-    assert.equal(rowCount(window), 30, 'ten association rows, three each');
+    assert.equal(rowCount(window), 20, 'ten association rows, two each');
     var names = inputNames(window);
     assert.equal(
-        names[names.length - 3], 'cloud_server_id_9',
+        names[names.length - 2], 'cloud_server_id_9',
         'the last association row is _9, making ten in total'
     );
     assert.equal(
@@ -463,14 +462,14 @@ test('grouped: the cap holds even if a hidden "+" is clicked', function() {
     for (var i = 1; i <= BULK_MAX_INDEX; i++) {
         clickAndAssertProgress(window, 'click ' + i);
     }
-    assert.equal(rowCount(window), 30, 'at the cap');
+    assert.equal(rowCount(window), 20, 'at the cap');
 
     assert.equal(
         forceClick(window, '.duplicate-field'), 'ok',
         'a stray click should not throw'
     );
     assert.equal(
-        rowCount(window), 30,
+        rowCount(window), 20,
         'no eleventh row: the request body has nowhere to put it'
     );
 });
@@ -486,7 +485,7 @@ test('grouped: a hidden "-" cannot remove the base row', function() {
     );
     assert.deepEqual(
         inputNames(window),
-        ['cloud_server_id', 'port', 'load_balancer_pool_id'],
+        ['cloud_server_id', 'load_balancer_pool_id'],
         'the base association row survives'
     );
 });
@@ -535,15 +534,15 @@ test('grouped: "-" drops the last association row', function() {
 
     clickAndAssertProgress(window, 'first click');
     clickAndAssertProgress(window, 'second click');
-    assert.equal(rowCount(window), 9, 'three association rows to start');
+    assert.equal(rowCount(window), 6, 'three association rows to start');
 
     assert.equal(clickMinus(window), 'ok', 'remove should not throw');
 
-    assert.equal(rowCount(window), 6, 'the _2 rows are gone');
+    assert.equal(rowCount(window), 4, 'the _2 rows are gone');
     assert.deepEqual(
         inputNames(window),
-        ['cloud_server_id', 'port', 'load_balancer_pool_id',
-         'cloud_server_id_1', 'port_1', 'load_balancer_pool_id_1'],
+        ['cloud_server_id', 'load_balancer_pool_id',
+         'cloud_server_id_1', 'load_balancer_pool_id_1'],
         'only the last row group is removed'
     );
     assert.equal(
@@ -564,10 +563,10 @@ test('grouped: "-" back to the base row hides itself', function() {
     clickAndAssertProgress(window, 'first click');
     assert.equal(clickMinus(window), 'ok', 'remove should not throw');
 
-    assert.equal(rowCount(window), 3, 'back to the base rows');
+    assert.equal(rowCount(window), 2, 'back to the base rows');
     assert.deepEqual(
         inputNames(window),
-        ['cloud_server_id', 'port', 'load_balancer_pool_id'],
+        ['cloud_server_id', 'load_balancer_pool_id'],
         'the base row is never removed'
     );
     assert.equal(visibleRemoveCount(window), 0, 'nothing left to remove');
@@ -589,8 +588,8 @@ test('grouped: add, remove and add again still names rows _1', function() {
 
     assert.deepEqual(
         inputNames(window),
-        ['cloud_server_id', 'port', 'load_balancer_pool_id',
-         'cloud_server_id_1', 'port_1', 'load_balancer_pool_id_1'],
+        ['cloud_server_id', 'load_balancer_pool_id',
+         'cloud_server_id_1', 'load_balancer_pool_id_1'],
         'the suffix sequence has no gap'
     );
     assert.equal(visibleRemoveCount(window), 1, 'one "-" is offered');

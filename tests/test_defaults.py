@@ -232,6 +232,7 @@ class DefaultsTests(unittest.TestCase):
             doc['data_object'] = doc.get('data_object').split('    },')[0] + (
                 '    }\r\n]'
             )
+            doc.pop('rackconnect_bulk_api_call_sync_version', None)
         return docs
 
     def test_ensure_default_api_calls_adds_monitoring_private_zone_call(self):
@@ -344,6 +345,35 @@ class DefaultsTests(unittest.TestCase):
             ),
             api_calls
         )
+        bulk_calls = [
+            call for call in calls
+            if (call.get('verb'), call.get('api_uri'))
+            in defaults.RACKCONNECT_BULK_API_CALL_KEYS
+        ]
+        self.assertEqual(len(bulk_calls), 4)
+        self.assertTrue(all(
+            call.get('rackconnect_bulk_api_call_sync_version') ==
+            defaults.BULK_API_CALL_SYNC_VERSION
+            for call in bulk_calls
+        ))
+        self.assertEqual(db.rack_connect.updated, [])
+
+    def test_second_boot_does_not_rewrite_fresh_bulk_inserts(self):
+        db = FakeDb()
+        defaults.ensure_default_api_calls(db)
+        target = db.rack_connect.find_one({
+            'api_uri': '/v3/{ddi}/load_balancer_pools/nodes',
+            'verb': 'POST'
+        })
+        target['data_object'] = 'admin custom body'
+        db.rack_connect.inserted = []
+        db.rack_connect.updated = []
+
+        defaults.ensure_default_api_calls(db)
+
+        self.assertEqual(db.rack_connect.inserted, [])
+        self.assertEqual(db.rack_connect.updated, [])
+        self.assertEqual(target.get('data_object'), 'admin custom body')
 
     def test_does_not_duplicate_rackconnect_call(self):
         existing = {
@@ -572,6 +602,32 @@ class DefaultsTests(unittest.TestCase):
         self.assertEqual(
             data[1].get('load_balancer_pool').get('id'),
             'pool-1'
+        )
+
+    def test_bulk_load_balancer_pool_nodes_skip_partial_rows(self):
+        helper = load_helper_module()
+        call = next(
+            call for call in defaults.RACKCONNECT_EXTRA_API_CALLS
+            if call.get('title') == 'Add Nodes to Load Balancer Pools'
+        )
+        json_data = {
+            'cloud_server_id': 'server-0',
+            'load_balancer_pool_id': 'pool-0',
+            'cloud_server_id_1': 'server-1',
+            'cloud_server_id_2': 'server-2',
+            'load_balancer_pool_id_2': 'pool-2'
+        }
+
+        data = helper.process_api_data_request(call, json_data)
+
+        self.assertEqual(len(data), 2)
+        self.assertEqual(
+            [item.get('cloud_server').get('id') for item in data],
+            ['server-0', 'server-2']
+        )
+        self.assertEqual(
+            [item.get('load_balancer_pool').get('id') for item in data],
+            ['pool-0', 'pool-2']
         )
 
     def test_bulk_server_group_nodes_render_three_rows(self):
