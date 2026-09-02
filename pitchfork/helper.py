@@ -42,6 +42,10 @@ UTC = tz.tzutc()
 API_REQUEST_TIMEOUT = (3.05, 30)
 
 
+class InvalidRequestData(Exception):
+    pass
+
+
 requests.packages.urllib3.disable_warnings()
 
 
@@ -382,6 +386,7 @@ def recursive_dict_object(
     elif isinstance(value, list):
         temp_list = []
         sub_list = []
+        skipped_required_duplicate_row = False
         for value_list in value:
             if isinstance(value_list, dict):
                 if has_missing_required_duplicate_group_value(
@@ -389,6 +394,7 @@ def recursive_dict_object(
                     json_data,
                     value_list
                 ):
+                    skipped_required_duplicate_row = True
                     continue
                 temp_list_dict = {}
                 for sub_dict_key, sub_dict_value in value_list.iteritems():
@@ -448,6 +454,10 @@ def recursive_dict_object(
 
         if temp_list:
             temp_dict[str(parent_key)] = temp_list
+        elif skipped_required_duplicate_row:
+            raise InvalidRequestData(
+                'At least one complete duplicate row is required.'
+            )
 
     else:
         if value:
@@ -548,6 +558,7 @@ def process_api_data_request(api_call, json_data):
         return temp_dict
 
     elif isinstance(temp_json, list):
+        skipped_required_duplicate_row = False
         for item in temp_json:
             if isinstance(item, dict):
                 if has_missing_required_duplicate_group_value(
@@ -555,6 +566,7 @@ def process_api_data_request(api_call, json_data):
                     json_data,
                     item
                 ):
+                    skipped_required_duplicate_row = True
                     continue
                 temp_item_dict = {}
                 for key, value in item.iteritems():
@@ -577,6 +589,11 @@ def process_api_data_request(api_call, json_data):
             else:
                 value = re.sub(r'(\{(.+?)\})', evaluate_replace, item)
                 temp_list.append(value)
+
+        if not temp_list and skipped_required_duplicate_row:
+            raise InvalidRequestData(
+                'At least one complete duplicate row is required.'
+            )
 
         return temp_list
     elif isinstance(temp_json, basestring):

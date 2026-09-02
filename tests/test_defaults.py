@@ -688,6 +688,35 @@ class DefaultsTests(unittest.TestCase):
 
         self.assertEqual(data, [{'server': 'server-0'}])
 
+    def test_duplicate_rows_all_blank_raise_explicit_error(self):
+        helper = load_helper_module()
+        call = {
+            'data_object': json.dumps([
+                {'server': '{sid}', 'pool': '{pid}'}
+            ]),
+            'variables': [
+                {
+                    'variable_name': 'sid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }, {
+                    'variable_name': 'pid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }
+            ]
+        }
+
+        with self.assertRaises(helper.InvalidRequestData) as context:
+            helper.process_api_data_request(call, {})
+
+        self.assertEqual(
+            str(context.exception),
+            'At least one complete duplicate row is required.'
+        )
+
     def test_monitoring_private_zone_skips_blank_metadata_key(self):
         helper = load_helper_module()
         data = helper.process_api_data_request(

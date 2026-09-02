@@ -175,6 +175,17 @@ class DuplicateRowLimitTests(unittest.TestCase):
             self.duplicate_row_limit(call, 'network_uuid'), 2
         )
 
+    def test_custom_header_placeholders_count_for_header_calls(self):
+        call = {
+            'custom_header_value': (
+                'node={network_uuid}; node={network_uuid_1}'
+            )
+        }
+
+        self.assertEqual(
+            self.duplicate_row_limit(call, 'network_uuid'), 1
+        )
+
     def test_limit_is_per_variable(self):
         """A variable with no slots of its own must not borrow another's.
 

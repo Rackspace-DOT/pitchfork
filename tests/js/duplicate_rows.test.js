@@ -1,6 +1,5 @@
 /*
- * Regression tests for the duplicate-row cloning JS in
- * pitchfork/templates/product_front.html.
+ * Regression tests for the duplicate-row cloning JS in pitchfork/static/js/ui.js.
  *
  * These exist because PR #68 shipped a bug that no Python test could see:
  * update_duplicate_field() looked up its input with ':input:visible' on a
@@ -22,8 +21,8 @@ var fs = require('fs');
 var path = require('path');
 var {JSDOM} = require('jsdom');
 
-var TEMPLATE = path.join(
-    __dirname, '..', '..', 'pitchfork', 'templates', 'product_front.html'
+var UI_JS = path.join(
+    __dirname, '..', '..', 'pitchfork', 'static', 'js', 'ui.js'
 );
 var JQUERY = require.resolve('jquery/dist/jquery.js');
 
@@ -46,38 +45,16 @@ var REQUIRED = [
 
 
 function extractDuplicateScript() {
-    var html = fs.readFileSync(TEMPLATE, 'utf8');
-    var blocks = html.match(/<script\b[^>]*>[\s\S]*?<\/script>/g) || [];
-    var block = null;
-    for (var i = 0; i < blocks.length; i++) {
-        if (blocks[i].indexOf('function duplicate_field_count') !== -1) {
-            block = blocks[i];
-            break;
-        }
-    }
-    if (!block) {
+    var source = fs.readFileSync(UI_JS, 'utf8');
+    var start = source.indexOf('function duplicate_field_count');
+    var end = source.indexOf('function setup_toggle_details');
+    if (start === -1 || end === -1 || end <= start) {
         throw new Error(
-            'no <script> block in product_front.html defines ' +
-            'duplicate_field_count -- update this extractor'
+            'ui.js duplicate-row region moved -- update this extractor'
         );
     }
 
-    var body = block
-        .replace(/^<script\b[^>]*>/, '')
-        .replace(/<\/script>$/, '');
-
-    /* The top of this block is Jinja (endpoints, require_region, ...) and it
-     * calls into ui.js on document.ready. Take only the duplicate-row region,
-     * which is plain JS. */
-    var start = body.indexOf('function duplicate_field_count');
-    var source = body.slice(start);
-
-    if (/\{\{|\{%/.test(source)) {
-        throw new Error(
-            'the duplicate-row JS now contains Jinja syntax; this extractor ' +
-            'can no longer eval it directly -- update the test'
-        );
-    }
+    source = source.slice(start, end);
     REQUIRED.forEach(function(needle) {
         if (source.indexOf(needle) === -1) {
             throw new Error(

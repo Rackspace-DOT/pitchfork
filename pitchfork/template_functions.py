@@ -47,7 +47,8 @@ def utility_processor():
 
         source = ''.join([
             api_call.get('data_object') or '',
-            api_call.get('api_uri') or ''
+            api_call.get('api_uri') or '',
+            api_call.get('custom_header_value') or ''
         ])
         suffixes = re.findall(
             r'\{%s_(\d+)\}' % re.escape(variable_name),
