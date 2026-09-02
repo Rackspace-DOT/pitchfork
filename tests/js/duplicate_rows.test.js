@@ -33,9 +33,14 @@ var REQUIRED = [
     'function duplicate_field_count',
     'function duplicate_field_name',
     'function duplicate_group_rows',
+    'function duplicate_group_indexes',
+    'function duplicate_group_max',
+    'function refresh_duplicate_group',
     'function update_duplicate_field',
     'function add_duplicate_group',
-    '.duplicate-field'
+    'function remove_duplicate_group',
+    '.duplicate-field',
+    '.remove-field'
 ];
 
 
@@ -122,19 +127,39 @@ function load(bodyHtml) {
 
 /* Mirrors the variables table in _call_layout.html. Only rows carrying a
  * duplicate_group get the row class/attribute; only the first variable of a
- * group renders the '+'. */
-function variablesTable(rows) {
+ * group renders the '+', and only grouped rows render the '-'.
+ *
+ * maxIndex is the highest row suffix the call's request body can hold, which
+ * the template derives from data_object via duplicate_row_limit(). 2 means
+ * three rows, 9 means ten. */
+function variablesTable(rows, maxIndex) {
+    if (maxIndex === undefined) { maxIndex = 2; }
     var html = rows.map(function(row) {
         var isGroup = !!row.group;
-        var plus = row.plus
-            ? '<a class="duplicate-field tooltip-title" title="Add Row"' +
-              ' data-duplicate-group="' + (row.group || '') + '"></a>'
-            : '';
+        /* buttonGroup lets a test point the controls at a group the rows do
+         * not belong to. */
+        var buttonGroup = row.buttonGroup !== undefined
+            ? row.buttonGroup
+            : (row.group || '');
+        var controls = '';
+        if (row.plus) {
+            controls =
+                '<a class="duplicate-field tooltip-title" title="Add Row"' +
+                ' data-duplicate-group="' + buttonGroup + '"' +
+                ' data-duplicate-max="' + maxIndex + '"></a>';
+            if (isGroup) {
+                controls +=
+                    '<a class="remove-field tooltip-title"' +
+                    ' title="Remove Row"' +
+                    ' data-duplicate-group="' + buttonGroup + '"' +
+                    ' style="display: none;"></a>';
+            }
+        }
         return '<tr' + (isGroup
                 ? ' class="duplicate-group-row" data-duplicate-group="' +
                   row.group + '"'
                 : '') + '>' +
-            '<td>' + plus + '</td>' +
+            '<td>' + controls + '</td>' +
             '<td class="variable-name-cell">' + row.name + '</td>' +
             '<td><input id="' + row.name + '" name="' + row.name +
             '" type="text"></td>' +
@@ -152,6 +177,9 @@ function loadBalancerPoolRows() {
         {name: 'load_balancer_pool_id', group: 'load_balancer_pool_nodes'}
     ];
 }
+
+/* The shipped bulk bodies hold ten association rows. */
+var BULK_MAX_INDEX = 9;
 
 
 function inputNames(window) {
@@ -179,13 +207,43 @@ function visiblePlusCount(window) {
     );
 }
 
-/* Click the first still-visible '+'. Returns 'ok', 'none' when there is
- * nothing left to click, or 'threw: ...'. A throw is the PR #68 failure. */
-function clickPlus(window) {
+function visibleRemoveCount(window) {
+    return window.eval(
+        'jQuery(".remove-field").filter(function(){' +
+        ' return this.style.display !== "none"; }).length'
+    );
+}
+
+/* Click the first still-visible control of `selector`. Returns 'ok', 'none'
+ * when there is nothing left to click, or 'threw: ...'. A throw is the PR #68
+ * failure. */
+function clickControl(window, selector) {
     return window.eval(
         '(function(){' +
-        '  var b = jQuery(".duplicate-field").filter(function(){' +
+        '  var b = jQuery("' + selector + '").filter(function(){' +
         '    return this.style.display !== "none"; }).first();' +
+        '  if (!b.length) { return "none"; }' +
+        '  try { b.trigger("click"); return "ok"; }' +
+        '  catch (e) { return "threw: " + e.name + ": " + e.message; }' +
+        '})()'
+    );
+}
+
+function clickPlus(window) {
+    return clickControl(window, '.duplicate-field');
+}
+
+function clickMinus(window) {
+    return clickControl(window, '.remove-field');
+}
+
+/* Trigger a control even when it is hidden. The anchors stay in the DOM and
+ * clone(true) copies their handlers, so a click can still arrive on one the
+ * refresh has hidden; the cap has to hold on its own. */
+function forceClick(window, selector) {
+    return window.eval(
+        '(function(){' +
+        '  var b = jQuery("' + selector + '").last();' +
         '  if (!b.length) { return "none"; }' +
         '  try { b.trigger("click"); return "ok"; }' +
         '  catch (e) { return "threw: " + e.name + ": " + e.message; }' +
@@ -262,7 +320,9 @@ function test(name, fn) {
 /* --- tests -------------------------------------------------------------- */
 
 test('grouped: one click clones every row in the group', function() {
-    var window = load(variablesTable(loadBalancerPoolRows()));
+    var window = load(
+        variablesTable(loadBalancerPoolRows(), BULK_MAX_INDEX)
+    );
 
     clickAndAssertProgress(window, 'first click');
 
@@ -285,8 +345,9 @@ test('grouped: one click clones every row in the group', function() {
     );
 });
 
-test('grouped: a second click clones to _2 and then stops', function() {
-    var window = load(variablesTable(loadBalancerPoolRows()));
+test('grouped: the cap comes from data-duplicate-max', function() {
+    /* A body with only {x}, {x_1}, {x_2} advertises max 2, so three rows. */
+    var window = load(variablesTable(loadBalancerPoolRows(), 2));
 
     clickAndAssertProgress(window, 'first click');
     clickAndAssertProgress(window, 'second click');
@@ -305,12 +366,71 @@ test('grouped: a second click clones to _2 and then stops', function() {
     );
     assert.equal(
         clickPlus(window), 'none',
-        'the row cap matches the three-element request body'
+        'the row cap never exceeds what the request body can hold'
+    );
+});
+
+test('grouped: reaches ten rows when the body holds ten', function() {
+    var window = load(
+        variablesTable(loadBalancerPoolRows(), BULK_MAX_INDEX)
+    );
+
+    for (var i = 1; i <= BULK_MAX_INDEX; i++) {
+        clickAndAssertProgress(window, 'click ' + i);
+    }
+
+    assert.equal(rowCount(window), 30, 'ten association rows, three each');
+    var names = inputNames(window);
+    assert.equal(
+        names[names.length - 3], 'cloud_server_id_9',
+        'the last association row is _9, making ten in total'
+    );
+    assert.equal(
+        visiblePlusCount(window), 0, 'the "+" is spent at the cap'
+    );
+    assert.equal(clickPlus(window), 'none', 'and cannot be clicked again');
+});
+
+test('grouped: the cap holds even if a hidden "+" is clicked', function() {
+    var window = load(
+        variablesTable(loadBalancerPoolRows(), BULK_MAX_INDEX)
+    );
+
+    for (var i = 1; i <= BULK_MAX_INDEX; i++) {
+        clickAndAssertProgress(window, 'click ' + i);
+    }
+    assert.equal(rowCount(window), 30, 'at the cap');
+
+    assert.equal(
+        forceClick(window, '.duplicate-field'), 'ok',
+        'a stray click should not throw'
+    );
+    assert.equal(
+        rowCount(window), 30,
+        'no eleventh row: the request body has nowhere to put it'
+    );
+});
+
+test('grouped: a hidden "-" cannot remove the base row', function() {
+    var window = load(
+        variablesTable(loadBalancerPoolRows(), BULK_MAX_INDEX)
+    );
+
+    assert.equal(
+        forceClick(window, '.remove-field'), 'ok',
+        'a stray click should not throw'
+    );
+    assert.deepEqual(
+        inputNames(window),
+        ['cloud_server_id', 'port', 'load_balancer_pool_id'],
+        'the base association row survives'
     );
 });
 
 test('grouped: clone inputs start empty', function() {
-    var window = load(variablesTable(loadBalancerPoolRows()));
+    var window = load(
+        variablesTable(loadBalancerPoolRows(), BULK_MAX_INDEX)
+    );
     window.eval('jQuery("#cloud_server_id").val("server-a")');
 
     clickAndAssertProgress(window, 'first click');
@@ -325,16 +445,101 @@ test('grouped: clone inputs start empty', function() {
     );
 });
 
+test('grouped: no "-" until there is a row to remove', function() {
+    var window = load(
+        variablesTable(loadBalancerPoolRows(), BULK_MAX_INDEX)
+    );
+
+    assert.equal(
+        visibleRemoveCount(window), 0,
+        'the base row cannot be removed, so no "-" is offered'
+    );
+    assert.equal(clickMinus(window), 'none', 'and none can be clicked');
+
+    clickAndAssertProgress(window, 'first click');
+
+    assert.equal(
+        visibleRemoveCount(window), 1,
+        'adding a row offers exactly one "-"'
+    );
+});
+
+test('grouped: "-" drops the last association row', function() {
+    var window = load(
+        variablesTable(loadBalancerPoolRows(), BULK_MAX_INDEX)
+    );
+
+    clickAndAssertProgress(window, 'first click');
+    clickAndAssertProgress(window, 'second click');
+    assert.equal(rowCount(window), 9, 'three association rows to start');
+
+    assert.equal(clickMinus(window), 'ok', 'remove should not throw');
+
+    assert.equal(rowCount(window), 6, 'the _2 rows are gone');
+    assert.deepEqual(
+        inputNames(window),
+        ['cloud_server_id', 'port', 'load_balancer_pool_id',
+         'cloud_server_id_1', 'port_1', 'load_balancer_pool_id_1'],
+        'only the last row group is removed'
+    );
+    assert.equal(
+        visiblePlusCount(window), 1,
+        'the "+" comes back once there is room again'
+    );
+    assert.equal(
+        visibleRemoveCount(window), 1,
+        'the "-" moves to the new last row'
+    );
+});
+
+test('grouped: "-" back to the base row hides itself', function() {
+    var window = load(
+        variablesTable(loadBalancerPoolRows(), BULK_MAX_INDEX)
+    );
+
+    clickAndAssertProgress(window, 'first click');
+    assert.equal(clickMinus(window), 'ok', 'remove should not throw');
+
+    assert.equal(rowCount(window), 3, 'back to the base rows');
+    assert.deepEqual(
+        inputNames(window),
+        ['cloud_server_id', 'port', 'load_balancer_pool_id'],
+        'the base row is never removed'
+    );
+    assert.equal(visibleRemoveCount(window), 0, 'nothing left to remove');
+    assert.equal(
+        visiblePlusCount(window), 1, 'and the "+" is available again'
+    );
+});
+
+test('grouped: add, remove and add again still names rows _1', function() {
+    /* The cloned controls carry handlers from clone(true); a stale index here
+     * would produce a gap such as _1, _3. */
+    var window = load(
+        variablesTable(loadBalancerPoolRows(), BULK_MAX_INDEX)
+    );
+
+    clickAndAssertProgress(window, 'first click');
+    assert.equal(clickMinus(window), 'ok', 'remove should not throw');
+    clickAndAssertProgress(window, 'click after removing');
+
+    assert.deepEqual(
+        inputNames(window),
+        ['cloud_server_id', 'port', 'load_balancer_pool_id',
+         'cloud_server_id_1', 'port_1', 'load_balancer_pool_id_1'],
+        'the suffix sequence has no gap'
+    );
+    assert.equal(visibleRemoveCount(window), 1, 'one "-" is offered');
+});
+
 test('grouped: an unresolvable group leaves the "+" alone', function() {
     /* The button advertises a group no row belongs to. Nothing can be cloned,
      * so the click must be inert rather than consuming the '+'. */
     var window = load(variablesTable([
-        {name: 'cloud_server_id', group: 'server_group_nodes', plus: true},
+        {name: 'cloud_server_id', group: 'server_group_nodes', plus: true,
+         buttonGroup: 'no_such_group'},
         {name: 'server_group_id', group: 'server_group_nodes'}
-    ]).replace(
-        'data-duplicate-group="server_group_nodes"></a>',
-        'data-duplicate-group="no_such_group"></a>'
-    ));
+    ], BULK_MAX_INDEX));
 
     assert.equal(clickPlus(window), 'ok', 'click should not throw');
     assert.equal(rowCount(window), 2, 'no rows are added');
@@ -362,6 +567,20 @@ test('legacy: ungrouped duplicates still clone one row at a time', function() {
     );
 
     assert.equal(clickPlus(window), 'none', 'capped at three rows');
+});
+
+test('legacy: ungrouped duplicates get no "-"', function() {
+    /* Removing rows is scoped to grouped duplicates, so the autoscale and
+     * servers network fields keep the behaviour they have always had. */
+    var window = load(variablesTable([{name: 'network_uuid', plus: true}]));
+
+    clickAndAssertProgress(window, 'first click');
+
+    assert.equal(
+        window.eval('jQuery(".remove-field").length'), 0,
+        'no remove control is rendered for ungrouped duplicates'
+    );
+    assert.equal(clickMinus(window), 'none', 'nothing to click');
 });
 
 

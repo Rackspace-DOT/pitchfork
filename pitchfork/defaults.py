@@ -12,10 +12,72 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import OrderedDict
 from copy import deepcopy
 
 from flask_cloudadmin.defaults import check_and_initialize
 from config import config
+
+import json
+
+
+"""
+    How many association rows the bulk endpoints accept. The duplicate-row UI
+    names cloned inputs <variable>_1 ... <variable>_9, and
+    process_api_data_request can only fill placeholders that already exist in
+    data_object, so this count is what actually caps the rows a user can send.
+    Rows left blank are dropped from the array, so a wider body costs nothing.
+"""
+BULK_ROW_COUNT = 10
+
+
+def _bulk_data_object(fields, count=BULK_ROW_COUNT):
+    """Build a JSON array request body with one object per association row.
+
+    `fields` maps a position in the row to the variable that fills it, as
+    (path, variable_name) pairs, where path is a tuple of nested JSON keys::
+
+        [(('cloud_server', 'id'), 'cloud_server_id'), (('port',), 'port')]
+
+    The first row uses the bare variable name and row N appends _N, matching
+    the suffixes the duplicate-row UI gives cloned inputs. Ten hand-written
+    copies per call would be several hundred lines of near-identical string
+    concatenation, and easy to get subtly wrong.
+    """
+    rows = []
+    for index in range(count):
+        suffix = '' if index == 0 else '_%d' % index
+        row = OrderedDict()
+        for path, variable_name in fields:
+            target = row
+            for key in path[:-1]:
+                target = target.setdefault(key, OrderedDict())
+
+            target[path[-1]] = '{%s%s}' % (variable_name, suffix)
+
+        rows.append(row)
+
+    """ Bodies are stored with CRLF line endings. """
+    return json.dumps(rows, indent=4).replace('\n', '\r\n')
+
+
+LOAD_BALANCER_POOL_NODE_FIELDS = [
+    (('cloud_server', 'id'), 'cloud_server_id'),
+    (('port',), 'port'),
+    (('load_balancer_pool', 'id'), 'load_balancer_pool_id')
+]
+
+
+LOAD_BALANCER_POOL_NODE_REMOVE_FIELDS = [
+    (('cloud_server', 'id'), 'cloud_server_id'),
+    (('load_balancer_pool', 'id'), 'load_balancer_pool_id')
+]
+
+
+SERVER_GROUP_NODE_FIELDS = [
+    (('cloud_server', 'id'), 'cloud_server_id'),
+    (('server_group', 'id'), 'server_group_id')
+]
 
 
 def _call_variable(
@@ -140,37 +202,7 @@ RACKCONNECT_EXTRA_API_CALLS = [
                 duplicate_group='load_balancer_pool_nodes'
             )
         ],
-        (
-            '[\r\n'
-            '    {\r\n'
-            '        "cloud_server": {\r\n'
-            '            "id": "{cloud_server_id}"\r\n'
-            '        },\r\n'
-            '        "port": "{port}",\r\n'
-            '        "load_balancer_pool": {\r\n'
-            '            "id": "{load_balancer_pool_id}"\r\n'
-            '        }\r\n'
-            '    },\r\n'
-            '    {\r\n'
-            '        "cloud_server": {\r\n'
-            '            "id": "{cloud_server_id_1}"\r\n'
-            '        },\r\n'
-            '        "port": "{port_1}",\r\n'
-            '        "load_balancer_pool": {\r\n'
-            '            "id": "{load_balancer_pool_id_1}"\r\n'
-            '        }\r\n'
-            '    },\r\n'
-            '    {\r\n'
-            '        "cloud_server": {\r\n'
-            '            "id": "{cloud_server_id_2}"\r\n'
-            '        },\r\n'
-            '        "port": "{port_2}",\r\n'
-            '        "load_balancer_pool": {\r\n'
-            '            "id": "{load_balancer_pool_id_2}"\r\n'
-            '        }\r\n'
-            '    }\r\n'
-            ']'
-        ),
+        _bulk_data_object(LOAD_BALANCER_POOL_NODE_FIELDS),
         True
     ),
     _rackconnect_call(
@@ -194,34 +226,7 @@ RACKCONNECT_EXTRA_API_CALLS = [
                 duplicate_group='load_balancer_pool_nodes'
             )
         ],
-        (
-            '[\r\n'
-            '    {\r\n'
-            '        "cloud_server": {\r\n'
-            '            "id": "{cloud_server_id}"\r\n'
-            '        },\r\n'
-            '        "load_balancer_pool": {\r\n'
-            '            "id": "{load_balancer_pool_id}"\r\n'
-            '        }\r\n'
-            '    },\r\n'
-            '    {\r\n'
-            '        "cloud_server": {\r\n'
-            '            "id": "{cloud_server_id_1}"\r\n'
-            '        },\r\n'
-            '        "load_balancer_pool": {\r\n'
-            '            "id": "{load_balancer_pool_id_1}"\r\n'
-            '        }\r\n'
-            '    },\r\n'
-            '    {\r\n'
-            '        "cloud_server": {\r\n'
-            '            "id": "{cloud_server_id_2}"\r\n'
-            '        },\r\n'
-            '        "load_balancer_pool": {\r\n'
-            '            "id": "{load_balancer_pool_id_2}"\r\n'
-            '        }\r\n'
-            '    }\r\n'
-            ']'
-        ),
+        _bulk_data_object(LOAD_BALANCER_POOL_NODE_REMOVE_FIELDS),
         True
     ),
     _rackconnect_call(
@@ -429,34 +434,7 @@ RACKCONNECT_EXTRA_API_CALLS = [
                 duplicate_group='server_group_nodes'
             )
         ],
-        (
-            '[\r\n'
-            '    {\r\n'
-            '        "cloud_server": {\r\n'
-            '            "id": "{cloud_server_id}"\r\n'
-            '        },\r\n'
-            '        "server_group": {\r\n'
-            '            "id": "{server_group_id}"\r\n'
-            '        }\r\n'
-            '    },\r\n'
-            '    {\r\n'
-            '        "cloud_server": {\r\n'
-            '            "id": "{cloud_server_id_1}"\r\n'
-            '        },\r\n'
-            '        "server_group": {\r\n'
-            '            "id": "{server_group_id_1}"\r\n'
-            '        }\r\n'
-            '    },\r\n'
-            '    {\r\n'
-            '        "cloud_server": {\r\n'
-            '            "id": "{cloud_server_id_2}"\r\n'
-            '        },\r\n'
-            '        "server_group": {\r\n'
-            '            "id": "{server_group_id_2}"\r\n'
-            '        }\r\n'
-            '    }\r\n'
-            ']'
-        ),
+        _bulk_data_object(SERVER_GROUP_NODE_FIELDS),
         True
     ),
     _rackconnect_call(
@@ -480,34 +458,7 @@ RACKCONNECT_EXTRA_API_CALLS = [
                 duplicate_group='server_group_nodes'
             )
         ],
-        (
-            '[\r\n'
-            '    {\r\n'
-            '        "cloud_server": {\r\n'
-            '            "id": "{cloud_server_id}"\r\n'
-            '        },\r\n'
-            '        "server_group": {\r\n'
-            '            "id": "{server_group_id}"\r\n'
-            '        }\r\n'
-            '    },\r\n'
-            '    {\r\n'
-            '        "cloud_server": {\r\n'
-            '            "id": "{cloud_server_id_1}"\r\n'
-            '        },\r\n'
-            '        "server_group": {\r\n'
-            '            "id": "{server_group_id_1}"\r\n'
-            '        }\r\n'
-            '    },\r\n'
-            '    {\r\n'
-            '        "cloud_server": {\r\n'
-            '            "id": "{cloud_server_id_2}"\r\n'
-            '        },\r\n'
-            '        "server_group": {\r\n'
-            '            "id": "{server_group_id_2}"\r\n'
-            '        }\r\n'
-            '    }\r\n'
-            ']'
-        ),
+        _bulk_data_object(SERVER_GROUP_NODE_FIELDS),
         True
     ),
     _rackconnect_call(

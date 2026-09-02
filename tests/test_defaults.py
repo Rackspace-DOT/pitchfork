@@ -1,6 +1,7 @@
 
 import json
 import os
+import re
 import sys
 import types
 import unittest
@@ -539,6 +540,99 @@ class DefaultsTests(unittest.TestCase):
                 variables[0].get('duplicate_group')
                 for var in variables
             ))
+
+    def test_bulk_bodies_hold_ten_association_rows(self):
+        bulk_calls = [
+            call for call in defaults.RACKCONNECT_EXTRA_API_CALLS
+            if (call.get('verb'), call.get('api_uri'))
+            in defaults.RACKCONNECT_BULK_API_CALL_KEYS
+        ]
+
+        self.assertEqual(len(bulk_calls), 4)
+        for call in bulk_calls:
+            body = json.loads(call.get('data_object'))
+            self.assertEqual(
+                len(body),
+                defaults.BULK_ROW_COUNT,
+                '%s should offer %d rows' % (
+                    call.get('title'), defaults.BULK_ROW_COUNT
+                )
+            )
+
+            """
+                The duplicate-row UI can only fill a row whose placeholder is
+                already in the body, so every row past the first must carry
+                the _N suffix the UI assigns to cloned inputs.
+            """
+            suffixes = re.findall(r'_(\d+)\}', call.get('data_object'))
+            self.assertEqual(
+                max(int(suffix) for suffix in suffixes),
+                defaults.BULK_ROW_COUNT - 1
+            )
+
+    def test_bulk_data_object_suffixes_every_variable_per_row(self):
+        body = json.loads(
+            defaults._bulk_data_object(
+                defaults.LOAD_BALANCER_POOL_NODE_FIELDS, 3
+            )
+        )
+
+        self.assertEqual(
+            body,
+            [
+                {
+                    'cloud_server': {'id': '{cloud_server_id}'},
+                    'port': '{port}',
+                    'load_balancer_pool': {'id': '{load_balancer_pool_id}'}
+                }, {
+                    'cloud_server': {'id': '{cloud_server_id_1}'},
+                    'port': '{port_1}',
+                    'load_balancer_pool': {'id': '{load_balancer_pool_id_1}'}
+                }, {
+                    'cloud_server': {'id': '{cloud_server_id_2}'},
+                    'port': '{port_2}',
+                    'load_balancer_pool': {'id': '{load_balancer_pool_id_2}'}
+                }
+            ]
+        )
+
+    def test_bulk_data_object_uses_crlf_line_endings(self):
+        body = defaults._bulk_data_object(defaults.SERVER_GROUP_NODE_FIELDS, 2)
+
+        self.assertIn('\r\n', body)
+        self.assertNotIn('\n', body.replace('\r\n', ''))
+
+    def test_bulk_load_balancer_pool_nodes_render_ten_rows(self):
+        helper = load_helper_module()
+        call = next(
+            call for call in defaults.RACKCONNECT_EXTRA_API_CALLS
+            if call.get('title') == 'Add Nodes to Load Balancer Pools'
+        )
+
+        json_data = {}
+        for index in range(defaults.BULK_ROW_COUNT):
+            suffix = '' if index == 0 else '_%d' % index
+            json_data['cloud_server_id' + suffix] = 'server-%d' % index
+            json_data['port' + suffix] = str(80 + index)
+            json_data['load_balancer_pool_id' + suffix] = 'pool-%d' % index
+
+        data = helper.process_api_data_request(call, json_data)
+
+        self.assertEqual(len(data), defaults.BULK_ROW_COUNT)
+        self.assertEqual(
+            [item.get('cloud_server').get('id') for item in data],
+            ['server-%d' % index
+             for index in range(defaults.BULK_ROW_COUNT)]
+        )
+
+        """
+            check_variable_type falls back to the base variable for suffixed
+            names, so the tenth row's port must still be an integer.
+        """
+        self.assertEqual(
+            [item.get('port') for item in data],
+            [80 + index for index in range(defaults.BULK_ROW_COUNT)]
+        )
 
     def test_variable_preserves_duplicate_metadata(self):
         models = load_models_module()

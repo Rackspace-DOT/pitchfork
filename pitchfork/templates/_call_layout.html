@@ -87,9 +87,13 @@
                                 </tr>
                                 {% for var in api_call.get('variables') %}
                                     <tr{% if var.get('duplicate_group') %} class="duplicate-group-row" data-duplicate-group="{{ var.get('duplicate_group') }}"{% endif %}>
-                                        <td width="26px">
-                                            {% if var.get('duplicate') %}
-                                                <a class="duplicate-field tooltip-title" title="Add Row" data-duplicate-group="{{ var.get('duplicate_group', '') }}"><span class="fa fa-plus text-success"></span></a>
+                                        <td width="42px">
+                                            {%- set duplicate_max = duplicate_row_limit(api_call, var.get('variable_name')) %}
+                                            {% if var.get('duplicate') and duplicate_max %}
+                                                <a class="duplicate-field tooltip-title" title="Add Row" data-duplicate-group="{{ var.get('duplicate_group', '') }}" data-duplicate-max="{{ duplicate_max }}"><span class="fa fa-plus text-success"></span></a>
+                                                {% if var.get('duplicate_group') %}
+                                                    <a class="remove-field tooltip-title" title="Remove Row" data-duplicate-group="{{ var.get('duplicate_group') }}" style="display: none;"><span class="fa fa-minus text-danger"></span></a>
+                                                {% endif -%}
                                             {% endif -%}
                                         </td>
                                         <td class="variable-name-cell">
