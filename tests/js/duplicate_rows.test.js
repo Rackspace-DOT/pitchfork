@@ -31,6 +31,7 @@ var JQUERY = require.resolve('jquery/dist/jquery.js');
  * template, fail loudly rather than quietly testing an empty string. */
 var REQUIRED = [
     'function duplicate_field_count',
+    'function duplicate_row_index',
     'function duplicate_field_name',
     'function duplicate_group_rows',
     'function duplicate_group_indexes',
@@ -164,7 +165,8 @@ function variablesTable(rows, maxIndex) {
               '" type="text">';
         return '<tr' + (isGroup
                 ? ' class="duplicate-group-row" data-duplicate-group="' +
-                  row.group + '"'
+                  row.group + '" data-duplicate-index="0"' +
+                  ' data-duplicate-base-name="' + row.name + '"'
                 : '') + '>' +
             '<td>' + controls + '</td>' +
             '<td class="variable-name-cell">' + row.name + '</td>' +
@@ -363,6 +365,24 @@ test('grouped: numeric-looking group names clone normally', function() {
         ['cloud_server_id', 'port', 'cloud_server_id_1', 'port_1'],
         'numeric group names must not be type-coerced by jQuery.data()'
     );
+});
+
+test('grouped: variable names ending in digits keep base row identity', function() {
+    var window = load(variablesTable([
+        {name: 'node_1', group: 'nodes', plus: true},
+        {name: 'pool_1', group: 'nodes'}
+    ], BULK_MAX_INDEX));
+
+    clickAndAssertProgress(window, 'numeric suffix click');
+    assert.equal(clickMinus(window), 'ok', 'remove should not throw');
+
+    assert.deepEqual(
+        inputNames(window),
+        ['node_1', 'pool_1'],
+        'base rows survive even when their names end in _<digit>'
+    );
+    assert.equal(visiblePlusCount(window), 1, 'base "+" comes back');
+    assert.equal(visibleRemoveCount(window), 0, 'base "-" stays hidden');
 });
 
 test('grouped: cloned select fields remain serializable', function() {

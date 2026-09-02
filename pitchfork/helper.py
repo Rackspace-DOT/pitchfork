@@ -317,6 +317,37 @@ def check_variable_type(api_call, key_value):
     return 'string'
 
 
+def variable_for_placeholder(api_call, name):
+    for var in api_call.get('variables') or []:
+        if var.get('variable_name') == name:
+            return var
+
+    base_name = re.match(r'(.+)_\d+$', name)
+    if base_name:
+        for var in api_call.get('variables') or []:
+            if var.get('variable_name') == base_name.group(1):
+                return var
+
+    return {}
+
+
+def is_required_duplicate_group_placeholder(api_call, name):
+    variable = variable_for_placeholder(api_call, name)
+    return variable.get('duplicate_group') and variable.get('required')
+
+
+def has_missing_required_duplicate_group_value(api_call, json_data, item):
+    placeholders = re.findall(r'\{([^{}]+?)\}', json.dumps(item))
+    required_grouped = [
+        name for name in placeholders
+        if is_required_duplicate_group_placeholder(api_call, name)
+    ]
+    if not required_grouped:
+        return False
+
+    return any(not json_data.get(name) for name in required_grouped)
+
+
 def recursive_dict_object(
     parent_key,
     value,
@@ -349,10 +380,17 @@ def recursive_dict_object(
                 temp_dict[parent_key] = req_key_value
 
     elif isinstance(value, list):
-        temp_list, temp_list_dict = [], {}
+        temp_list = []
         sub_list = []
         for value_list in value:
             if isinstance(value_list, dict):
+                if has_missing_required_duplicate_group_value(
+                    api_call,
+                    json_data,
+                    value_list
+                ):
+                    continue
+                temp_list_dict = {}
                 for sub_dict_key, sub_dict_value in value_list.iteritems():
                     temp_list_dict = recursive_dict_object(
                         sub_dict_key,
@@ -416,6 +454,8 @@ def recursive_dict_object(
             _pkey = re.match(r'\{(.+?)\}', parent_key)
             if _pkey:
                 _pkey_value = json_data.get(_pkey.group(1))
+                if not _pkey_value:
+                    return temp_dict
             else:
                 _pkey_value = parent_key
 
@@ -482,30 +522,6 @@ def process_api_data_request(api_call, json_data):
         else:
             return m.group(1)
 
-    def variable_for_placeholder(name):
-        for var in api_call.get('variables') or []:
-            if var.get('variable_name') == name:
-                return var
-
-        base_name = re.match(r'(.+)_\d+$', name)
-        if base_name:
-            for var in api_call.get('variables') or []:
-                if var.get('variable_name') == base_name.group(1):
-                    return var
-
-        return {}
-
-    def has_missing_duplicate_group_value(item):
-        placeholders = re.findall(r'\{([^{}]+?)\}', json.dumps(item))
-        grouped = [
-            name for name in placeholders
-            if variable_for_placeholder(name).get('duplicate_group')
-        ]
-        if not grouped:
-            return False
-
-        return any(not json_data.get(name) for name in grouped)
-
     if api_call.get('required_key'):
         req_key = api_call.get('required_key_name')
         if api_call.get('required_key_type') == 'dict':
@@ -534,7 +550,11 @@ def process_api_data_request(api_call, json_data):
     elif isinstance(temp_json, list):
         for item in temp_json:
             if isinstance(item, dict):
-                if has_missing_duplicate_group_value(item):
+                if has_missing_required_duplicate_group_value(
+                    api_call,
+                    json_data,
+                    item
+                ):
                     continue
                 temp_item_dict = {}
                 for key, value in item.iteritems():

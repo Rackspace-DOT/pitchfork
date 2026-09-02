@@ -630,6 +630,74 @@ class DefaultsTests(unittest.TestCase):
             ['pool-0', 'pool-2']
         )
 
+    def test_nested_duplicate_lists_skip_partial_rows_without_leaking(self):
+        helper = load_helper_module()
+        call = {
+            'data_object': json.dumps({
+                'nodes': [
+                    {'a': '{sid}', 'b': '{pid}'},
+                    {'a': '{sid_1}', 'b': '{pid_1}'}
+                ]
+            }),
+            'variables': [
+                {
+                    'variable_name': 'sid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }, {
+                    'variable_name': 'pid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }
+            ]
+        }
+        json_data = {
+            'sid': 'server-0',
+            'pid': 'pool-0',
+            'pid_1': 'pool-1'
+        }
+
+        data = helper.process_api_data_request(call, json_data)
+
+        self.assertEqual(data, {'nodes': [{'a': 'server-0', 'b': 'pool-0'}]})
+
+    def test_duplicate_row_skip_ignores_blank_optional_fields(self):
+        helper = load_helper_module()
+        call = {
+            'data_object': json.dumps([
+                {'server': '{sid}', 'note': '{note}'}
+            ]),
+            'variables': [
+                {
+                    'variable_name': 'sid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }, {
+                    'variable_name': 'note',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': False
+                }
+            ]
+        }
+
+        data = helper.process_api_data_request(call, {'sid': 'server-0'})
+
+        self.assertEqual(data, [{'server': 'server-0'}])
+
+    def test_monitoring_private_zone_skips_blank_metadata_key(self):
+        helper = load_helper_module()
+        data = helper.process_api_data_request(
+            defaults.MONITORING_PRIVATE_ZONE_CALL,
+            {'label': 'zone-a', 'metadata_value': 'value-a'}
+        )
+
+        self.assertEqual(data.get('label'), 'zone-a')
+        self.assertNotIn('metadata', data)
+
     def test_bulk_server_group_nodes_render_three_rows(self):
         helper = load_helper_module()
         call = next(

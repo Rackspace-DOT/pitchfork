@@ -86,7 +86,7 @@
                                     <th>Description</th>
                                 </tr>
                                 {% for var in api_call.get('variables') %}
-                                    <tr{% if var.get('duplicate_group') %} class="duplicate-group-row" data-duplicate-group="{{ var.get('duplicate_group') }}"{% endif %}>
+                                    <tr{% if var.get('duplicate_group') %} class="duplicate-group-row" data-duplicate-group="{{ var.get('duplicate_group') }}" data-duplicate-index="0" data-duplicate-base-name="{{ var.get('variable_name') }}"{% endif %}>
                                         <td width="42px">
                                             {%- set duplicate_max = duplicate_group_row_limit(api_call, var) %}
                                             {% if var.get('duplicate') and duplicate_max %}

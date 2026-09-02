@@ -145,8 +145,18 @@
             return match ? parseInt(match[1], 10) : 0;
         }
 
-        function duplicate_field_name(field_name, count) {
-            var base_name = field_name.replace(/_\d+$/, '');
+        function duplicate_row_index(row) {
+            var index = row.attr('data-duplicate-index');
+            if (index !== undefined) {
+                return parseInt(index, 10) || 0;
+            }
+            var field = row.find(':input').first();
+            return field.length ? duplicate_field_count(field.attr('name')) : 0;
+        }
+
+        function duplicate_field_name(row, field_name, count) {
+            var base_name = row.attr('data-duplicate-base-name') ||
+                field_name.replace(/_\d+$/, '');
             return base_name + '_' + (count + 1);
         }
 
@@ -157,14 +167,19 @@
                 return (
                     row.attr('data-duplicate-group') === group_name &&
                     field.length &&
-                    duplicate_field_count(field.attr('name')) === count
+                    duplicate_row_index(row) === count
                 );
             });
         }
 
         function update_duplicate_field(row, count) {
             var field = row.find(':input').first();
-            var next_name = duplicate_field_name(field.attr('name'), count);
+            var next_name = duplicate_field_name(
+                row,
+                field.attr('name'),
+                count
+            );
+            row.attr('data-duplicate-index', count + 1);
             field.attr('name', next_name);
             field.attr('id', next_name);
             if (field.is('select')) {
@@ -193,7 +208,7 @@
                 ) {
                     return;
                 }
-                var index = duplicate_field_count(field.attr('name'));
+                var index = duplicate_row_index(row);
                 if (indexes.indexOf(index) === -1) {
                     indexes.push(index);
                 }
