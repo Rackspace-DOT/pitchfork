@@ -51,7 +51,7 @@ def missing_requirement():
 class DuplicateRowsJsTests(unittest.TestCase):
     """Drives tests/js/duplicate_rows.test.js.
 
-    The duplicate-row cloning in product_front.html is not reachable from the
+    The duplicate-row cloning in ui.js is not reachable from the
     Python suite, and PR #68 shipped a break in it that every Python test
     passed through. This wrapper keeps that JS covered by the normal test
     command, and skips with instructions when node or its packages are absent

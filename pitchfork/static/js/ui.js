@@ -408,6 +408,10 @@ function process_display_api_call(send_to, data, form_submit, form_value) {
 
     function error_process(result) {
         $('#loading_div_' + form_submit).hide();
+        var response = result.responseJSON || {};
+        var message = response.response_body ||
+            'There was an error processing the request';
+        show_product_message(message, 'error');
     }
 }
 

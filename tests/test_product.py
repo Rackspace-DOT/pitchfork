@@ -90,7 +90,12 @@ class ProductTests(unittest.TestCase):
             'verb': 'GET',
             'use_data': True,
             'group': 'scaling_group',
-            'data_object': "{\r\n    \"test_var\": \"{test_var_value}\"\r\n}",
+            'data_object': (
+                "{\r\n"
+                "    \"test_var\": \"{test_var_value}\",\r\n"
+                "    \"test_var_1\": \"{test_var_value_1}\"\r\n"
+                "}"
+            ),
             'variables': [
                 {
                     'field_type': 'text',

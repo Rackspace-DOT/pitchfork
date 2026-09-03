@@ -781,6 +781,60 @@ class DefaultsTests(unittest.TestCase):
             'At least one complete duplicate row is required.'
         )
 
+    def test_invalid_integer_value_raises_explicit_error(self):
+        helper = load_helper_module()
+        call = {
+            'data_object': json.dumps({'checks': '{maximum_checks}'}),
+            'variables': [
+                {
+                    'variable_name': 'maximum_checks',
+                    'field_type': 'integer'
+                }
+            ]
+        }
+
+        with self.assertRaises(helper.InvalidRequestData) as context:
+            helper.process_api_data_request(
+                call,
+                {'maximum_checks': 'not-a-number'}
+            )
+
+        self.assertEqual(
+            str(context.exception),
+            'Invalid integer value for maximum_checks.'
+        )
+
+    def test_nested_scalar_list_survives_skipped_duplicate_row(self):
+        helper = load_helper_module()
+        call = {
+            'data_object': json.dumps({
+                'items': [
+                    '{tag}',
+                    {'server': '{sid}', 'pool': '{pid}'}
+                ]
+            }),
+            'variables': [
+                {
+                    'variable_name': 'tag',
+                    'field_type': 'text'
+                }, {
+                    'variable_name': 'sid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }, {
+                    'variable_name': 'pid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }
+            ]
+        }
+
+        data = helper.process_api_data_request(call, {'tag': 'keep-me'})
+
+        self.assertEqual(data, {'items': ['keep-me']})
+
     def test_history_logging_swallows_data_rebuild_errors(self):
         helper = load_helper_module()
 

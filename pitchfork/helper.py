@@ -46,6 +46,19 @@ class InvalidRequestData(Exception):
     pass
 
 
+def cast_request_value(value, var_type, variable_name):
+    try:
+        if var_type == 'integer':
+            return int(value.strip())
+        if var_type == 'float':
+            return float(value.strip())
+    except (TypeError, ValueError):
+        raise InvalidRequestData(
+            'Invalid %s value for %s.' % (var_type, variable_name)
+        )
+    return None
+
+
 requests.packages.urllib3.disable_warnings()
 
 
@@ -422,9 +435,17 @@ def recursive_dict_object(
                             _key.group(1)
                         )
                         if var_type == 'integer':
-                            sub_list.append(int(_value.strip()))
+                            sub_list.append(cast_request_value(
+                                _value,
+                                var_type,
+                                _key.group(1)
+                            ))
                         elif var_type == 'float':
-                            sub_list.append(float(_value.strip()))
+                            sub_list.append(cast_request_value(
+                                _value,
+                                var_type,
+                                _key.group(1)
+                            ))
                         elif var_type == 'boolean':
                             if _value.lower() == 'false':
                                 _value = ''
@@ -448,7 +469,7 @@ def recursive_dict_object(
 
         if temp_list:
             temp_dict[str(parent_key)] = temp_list
-        elif skipped_required_duplicate_row:
+        elif skipped_required_duplicate_row and not sub_list:
             raise InvalidRequestData(
                 'At least one complete duplicate row is required.'
             )
@@ -477,9 +498,17 @@ def recursive_dict_object(
                     )
                     if _value != "null":
                         if var_type == 'integer':
-                            temp_dict[str(_pkey_value)] = int(_value.strip())
+                            temp_dict[str(_pkey_value)] = cast_request_value(
+                                _value,
+                                var_type,
+                                _key.group(1)
+                            )
                         elif var_type == 'float':
-                            temp_dict[str(_pkey_value)] = float(_value.strip())
+                            temp_dict[str(_pkey_value)] = cast_request_value(
+                                _value,
+                                var_type,
+                                _key.group(1)
+                            )
                         elif var_type == 'boolean':
                             if _value.lower() == 'false':
                                 _value = ''
