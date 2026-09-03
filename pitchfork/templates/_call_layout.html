@@ -86,13 +86,17 @@
                                     <th>Description</th>
                                 </tr>
                                 {% for var in api_call.get('variables') %}
-                                    <tr>
-                                        <td width="26px">
-                                            {% if var.get('duplicate') %}
-                                                <a class="duplicate-field tooltip-title" title="Add Network"><span class="fa fa-plus text-success"></span></a>
+                                    <tr{% if var.get('duplicate_group') %} class="duplicate-group-row" data-duplicate-group="{{ var.get('duplicate_group') }}"{% endif %}{% if var.get('duplicate_group') or var.get('duplicate') %} data-duplicate-index="0" data-duplicate-base-name="{{ var.get('variable_name') }}"{% endif %}>
+                                        <td width="42px">
+                                            {%- set duplicate_max = duplicate_group_row_limit(api_call, var) %}
+                                            {% if var.get('duplicate') and duplicate_max %}
+                                                <a class="duplicate-field tooltip-title" title="Add Row" data-duplicate-group="{{ var.get('duplicate_group', '') }}" data-duplicate-max="{{ duplicate_max }}"><span class="fa fa-plus text-success"></span></a>
+                                                {% if var.get('duplicate_group') %}
+                                                    <a class="remove-field tooltip-title" title="Remove Row" data-duplicate-group="{{ var.get('duplicate_group') }}" style="display: none;"><span class="fa fa-minus text-danger"></span></a>
+                                                {% endif -%}
                                             {% endif -%}
                                         </td>
-                                        <td>
+                                        <td class="variable-name-cell">
                                             {{ var.get('variable_name') }}
                                         </td>
                                         <td{% if var.get('required') %} class="text-danger"{% endif %}>
@@ -100,6 +104,9 @@
                                                 <input id="{{ var.get('variable_name') }}" name="{{ var.get('variable_name') }}" type="text" placeholder="{{ var.get('variable_name')|unslug|title }}">
                                             {% elif var.get('field_display') == 'SelectField' %}
                                                 <select id="{{ var.get('variable_name') }}" name="{{ var.get('variable_name') }}">
+                                                    {% if var.get('duplicate_group') %}
+                                                        <option value=""></option>
+                                                    {% endif %}
                                                     {% for var in parse_field_data(var.get('field_display_data')) %}
                                                         <option value="{{ var }}">{{ var }}</option>
                                                     {% endfor %}

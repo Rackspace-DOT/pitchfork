@@ -42,6 +42,23 @@ UTC = tz.tzutc()
 API_REQUEST_TIMEOUT = (3.05, 30)
 
 
+class InvalidRequestData(Exception):
+    pass
+
+
+def cast_request_value(value, var_type, variable_name):
+    try:
+        if var_type == 'integer':
+            return int(value.strip())
+        if var_type == 'float':
+            return float(value.strip())
+    except (TypeError, ValueError):
+        raise InvalidRequestData(
+            'Invalid %s value for %s.' % (var_type, variable_name)
+        )
+    return None
+
+
 requests.packages.urllib3.disable_warnings()
 
 
@@ -80,8 +97,8 @@ def generate_group_choices(product):
 
 
 def check_url_endpoints(us, uk):
-    us_find = re.findall('\{(.+?)\}', us)
-    uk_find = re.findall('\{(.+?)\}', uk)
+    us_find = re.findall(r'\{(.+?)\}', us)
+    uk_find = re.findall(r'\{(.+?)\}', uk)
     if 'region' in us_find:
         return False
 
@@ -177,6 +194,8 @@ def generate_edit_call_form(product, call, call_id):
             temp.form.description.data = temp_variable.description
             temp.form.variable_name.data = temp_variable.variable_name
             temp.form.field_display.data = temp_variable.field_display
+            temp.form.duplicate.data = temp_variable.duplicate
+            temp.form.duplicate_group.data = temp_variable.duplicate_group
             temp.form.field_display_data.data = (
                 temp_variable.field_display_data
             )
@@ -193,7 +212,7 @@ def generate_edit_call_form(product, call, call_id):
 def get_vars_for_call(submissions):
     data, count = [], []
     for key, value in submissions:
-        temp = re.search('variable_(\d+?)-(\w.*)', key)
+        temp = re.search(r'variable_(\d+?)-(\w.*)', key)
         if temp:
             if count:
                 if not int(temp.group(1)) in count:
@@ -205,7 +224,7 @@ def get_vars_for_call(submissions):
         data.append({'ignore': 'placeholder'})
 
     for key, value in submissions:
-        temp = re.search('variable_(\d+?)-(\w.*)', key)
+        temp = re.search(r'variable_(\d+?)-(\w.*)', key)
         if temp:
             if temp.group(2) != 'csrf_token':
                 if str(temp.group(2)) == 'required':
@@ -291,7 +310,7 @@ def process_api_url(url, request):
         else:
             return m.group(1)
 
-    api_url = re.sub('(\{(.+?)\})', evaluate_replace, url)
+    api_url = re.sub(r'(\{(.+?)\})', evaluate_replace, url)
     temp_filter = request.json.get('add_filter')
     if temp_filter and len(temp_filter) > 1:
         temp_filter = sanitize_query_filter(temp_filter)
@@ -306,7 +325,86 @@ def check_variable_type(api_call, key_value):
         if var.get('variable_name') == key_value:
             return var.get('field_type')
 
+    base_key = re.match(r'(.+)_\d+$', key_value)
+    if base_key:
+        for var in api_call.get('variables'):
+            if var.get('variable_name') == base_key.group(1):
+                return var.get('field_type')
+
     return 'string'
+
+
+def variable_for_placeholder(api_call, name):
+    for var in api_call.get('variables') or []:
+        if var.get('variable_name') == name:
+            return var
+
+    base_name = re.match(r'(.+)_\d+$', name)
+    if base_name:
+        for var in api_call.get('variables') or []:
+            if var.get('variable_name') == base_name.group(1):
+                return var
+
+    return {}
+
+
+def is_duplicate_group_placeholder(api_call, name):
+    return bool(variable_for_placeholder(api_call, name).get(
+        'duplicate_group'
+    ))
+
+
+def is_required_duplicate_group_placeholder(api_call, name):
+    variable = variable_for_placeholder(api_call, name)
+    return variable.get('duplicate_group') and variable.get('required')
+
+
+DUPLICATE_ROW_COMPLETE = 'complete'
+DUPLICATE_ROW_BLANK = 'blank'
+DUPLICATE_ROW_PARTIAL = 'partial'
+
+
+def duplicate_row_state(api_call, json_data, item):
+    """Classify a duplicate row and name the required values it is missing.
+
+    The stored body always renders every row slot, so a user filling three
+    rows leaves the rest untouched: a row where no grouped field at all was
+    filled is blank and gets dropped. Once any grouped field carries a value
+    the user meant to send that row, so a missing required value there is a
+    mistake -- dropping it silently would return success for a request that
+    quietly lost data -- and callers reject the whole submission instead.
+
+    Optional grouped fields count toward "the user filled something in", which
+    is why blankness is judged over every grouped placeholder rather than only
+    the required ones.
+    """
+    placeholders = re.findall(r'\{([^{}]+?)\}', json.dumps(item))
+    grouped = [
+        name for name in placeholders
+        if is_duplicate_group_placeholder(api_call, name)
+    ]
+    if not grouped:
+        return DUPLICATE_ROW_COMPLETE, []
+
+    missing_required = [
+        name for name in grouped
+        if is_required_duplicate_group_placeholder(api_call, name) and
+        not json_data.get(name)
+    ]
+    if not any(json_data.get(name) for name in grouped):
+        return DUPLICATE_ROW_BLANK, missing_required
+
+    if missing_required:
+        return DUPLICATE_ROW_PARTIAL, missing_required
+
+    return DUPLICATE_ROW_COMPLETE, []
+
+
+def incomplete_duplicate_row_message(missing_values):
+    """Name the fields keeping a partly filled duplicate row from sending."""
+    return 'Missing required duplicate row values: %s.' % ', '.join(
+        missing_values
+    )
 
 
 def recursive_dict_object(
@@ -341,10 +439,24 @@ def recursive_dict_object(
                 temp_dict[parent_key] = req_key_value
 
     elif isinstance(value, list):
-        temp_list, temp_list_dict = [], {}
+        temp_list = []
         sub_list = []
+        skipped_required_duplicate_row = False
         for value_list in value:
             if isinstance(value_list, dict):
+                row_state, missing_values = duplicate_row_state(
+                    api_call,
+                    json_data,
+                    value_list
+                )
+                if row_state == DUPLICATE_ROW_PARTIAL:
+                    raise InvalidRequestData(
+                        incomplete_duplicate_row_message(missing_values)
+                    )
+                if row_state == DUPLICATE_ROW_BLANK:
+                    skipped_required_duplicate_row = True
+                    continue
+                temp_list_dict = {}
                 for sub_dict_key, sub_dict_value in value_list.iteritems():
                     temp_list_dict = recursive_dict_object(
                         sub_dict_key,
@@ -359,15 +471,9 @@ def recursive_dict_object(
 
                 if len(temp_list_dict) > 0:
                     temp_list.append(copy.deepcopy(temp_list_dict))
-                    temp_list = [
-                        dict(temp_set) for temp_set in set(
-                            tuple(item.items())
-                            for item in temp_list
-                        )
-                    ]
 
             else:
-                _key = re.match('\{(.+?)\}', value_list)
+                _key = re.match(r'\{(.+?)\}', value_list)
                 if _key:
                     _value = json_data.get(_key.group(1))
                     if _value and _value != '':
@@ -376,9 +482,17 @@ def recursive_dict_object(
                             _key.group(1)
                         )
                         if var_type == 'integer':
-                            sub_list.append(int(_value.strip()))
+                            sub_list.append(cast_request_value(
+                                _value,
+                                var_type,
+                                _key.group(1)
+                            ))
                         elif var_type == 'float':
-                            sub_list.append(float(_value.strip()))
+                            sub_list.append(cast_request_value(
+                                _value,
+                                var_type,
+                                _key.group(1)
+                            ))
                         elif var_type == 'boolean':
                             if _value.lower() == 'false':
                                 _value = ''
@@ -402,17 +516,23 @@ def recursive_dict_object(
 
         if temp_list:
             temp_dict[str(parent_key)] = temp_list
+        elif skipped_required_duplicate_row and not sub_list:
+            raise InvalidRequestData(
+                'At least one complete duplicate row is required.'
+            )
 
     else:
         if value:
-            _pkey = re.match('\{(.+?)\}', parent_key)
+            _pkey = re.match(r'\{(.+?)\}', parent_key)
             if _pkey:
                 _pkey_value = json_data.get(_pkey.group(1))
+                if not _pkey_value:
+                    return temp_dict
             else:
                 _pkey_value = parent_key
 
             try:
-                _key = re.match('\{(.+?)\}', value)
+                _key = re.match(r'\{(.+?)\}', value)
             except Exception:
                 _key = None
 
@@ -425,9 +545,17 @@ def recursive_dict_object(
                     )
                     if _value != "null":
                         if var_type == 'integer':
-                            temp_dict[str(_pkey_value)] = int(_value.strip())
+                            temp_dict[str(_pkey_value)] = cast_request_value(
+                                _value,
+                                var_type,
+                                _key.group(1)
+                            )
                         elif var_type == 'float':
-                            temp_dict[str(_pkey_value)] = float(_value.strip())
+                            temp_dict[str(_pkey_value)] = cast_request_value(
+                                _value,
+                                var_type,
+                                _key.group(1)
+                            )
                         elif var_type == 'boolean':
                             if _value.lower() == 'false':
                                 _value = ''
@@ -468,6 +596,12 @@ def process_api_data_request(api_call, json_data):
     req_key = None
     req_key_value = None
 
+    def evaluate_replace(m):
+        if json_data.get(m.group(2)):
+            return json_data.get(m.group(2)).strip()
+        else:
+            return m.group(1)
+
     if api_call.get('required_key'):
         req_key = api_call.get('required_key_name')
         if api_call.get('required_key_type') == 'dict':
@@ -494,39 +628,64 @@ def process_api_data_request(api_call, json_data):
         return temp_dict
 
     elif isinstance(temp_json, list):
+        skipped_required_duplicate_row = False
         for item in temp_json:
             if isinstance(item, dict):
+                row_state, missing_values = duplicate_row_state(
+                    api_call,
+                    json_data,
+                    item
+                )
+                if row_state == DUPLICATE_ROW_PARTIAL:
+                    raise InvalidRequestData(
+                        incomplete_duplicate_row_message(missing_values)
+                    )
+                if row_state == DUPLICATE_ROW_BLANK:
+                    skipped_required_duplicate_row = True
+                    continue
+                temp_item_dict = {}
                 for key, value in item.iteritems():
                     if value:
-                        temp_dict = recursive_dict_object(
+                        temp_item_dict = recursive_dict_object(
                             key,
                             value,
                             api_call,
                             json_data,
                             temp_json,
-                            temp_dict,
+                            temp_item_dict,
                             req_key,
                             req_key_value
                         )
                     if value is None:
-                        temp_dict[str(key)] = None
+                        temp_item_dict[str(key)] = None
 
-                temp_list.append(temp_dict)
+                if temp_item_dict:
+                    temp_list.append(temp_item_dict)
             else:
-                def evaluate_replace(m):
-                    if json_data.get(m.group(2)):
-                        return re.sub(
-                            m.group(1),
-                            json_data.get(m.group(2)).strip(),
-                            m.group(0)
-                        )
-                    else:
-                        return m.group(1)
-
-                value = re.sub('(\{(.+?)\})', evaluate_replace, item)
+                value = re.sub(r'(\{(.+?)\})', evaluate_replace, item)
                 temp_list.append(value)
 
+        if not temp_list and skipped_required_duplicate_row:
+            raise InvalidRequestData(
+                'At least one complete duplicate row is required.'
+            )
+
         return temp_list
+    elif isinstance(temp_json, basestring):
+        missing_value = [False]
+
+        def evaluate_scalar_replace(m):
+            if json_data.get(m.group(1)):
+                return json_data.get(m.group(1)).strip()
+            missing_value[0] = True
+            return ''
+
+        value = re.sub(r'\{([^{}]+?)\}', evaluate_scalar_replace, temp_json)
+        if missing_value[0]:
+            return None
+        return value
+    else:
+        return temp_json
 
 
 def create_custom_header(api_call, request):
@@ -551,7 +710,7 @@ def create_custom_header(api_call, request):
 
     if api_call.get('add_to_header'):
         temp_value = api_call.get('custom_header_value')
-        key_value = re.sub('(\{(.+?)\})', evaluate_replace, temp_value)
+        key_value = re.sub(r'(\{(.+?)\})', evaluate_replace, temp_value)
         header[api_call.get('custom_header_key')] = key_value.strip()
 
     return header
@@ -616,14 +775,14 @@ def process_api_request(url, verb, data, headers, html_convert=True):
             else:
                 content = json.loads(response.content)
     except Exception:
-        temp = re.findall('<body>(.+?)<\/body>', response.content, re.S)
+        temp = re.findall(r'<body>(.+?)<\/body>', response.content, re.S)
         if temp:
             formatted_content = re.sub(
-                '\n|\r|\s\s+?|<br \/>|<h1>',
+                r'\n|\r|\s\s+?|<br \/>|<h1>',
                 '',
                 temp[0]
             )
-            content = re.sub('<\/h1>', '<br />', formatted_content)
+            content = re.sub(r'<\/h1>', '<br />', formatted_content)
         elif len(response.text) > 5:
             content = "%s Status Code: %s" % (
                 str(response.text),
@@ -676,10 +835,8 @@ def log_api_call_request(
         rep_body = None
 
     if data_package:
-        data_package = process_api_data_request(
-            call,
-            sanitize_data_for_mongo(request)
-        )
+        data_package = sanitize_keys_for_mongo(data_package)
+
     try:
         g.db.history.insert(
             {
@@ -712,10 +869,32 @@ def log_api_call_request(
     return
 
 
+def sanitize_keys_for_mongo(value):
+    """Escape dots in dict keys so the history record can be stored.
+
+    Mongo rejects dots in document keys, and a body that builds its keys from
+    user input -- a metadata key, say -- can produce them. Only keys need
+    escaping here: the body itself was already built for the outbound call.
+    """
+    if isinstance(value, dict):
+        return {
+            re.sub(r'\.', '&#46;', str(key)): sanitize_keys_for_mongo(item)
+            for key, item in value.iteritems()
+        }
+
+    if isinstance(value, list):
+        return [sanitize_keys_for_mongo(item) for item in value]
+
+    return value
+
+
 def sanitize_data_for_mongo(data):
     temp_dict = {}
     for k, v in data.iteritems():
-        temp_dict[k] = re.sub('\.', '&#46;', v)
+        if type(v) is not list:
+            temp_dict[k] = re.sub(r'\.', '&#46;', v)
+        else:
+            temp_dict[k] = v
 
     return temp_dict
 

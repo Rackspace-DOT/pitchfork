@@ -81,10 +81,18 @@ function display_message(message, alert_class) {
 }
 
 function show_product_message(message, alert_class) {
-    $('#generated_messages_product').html(
-        '<div class="alert alert-' + alert_class + '">' +
-        '<button type="button" class="close" data-dismiss="alert">' +
-        '&times;</button><p>' + message + '</p></div>');
+    /* Build the alert as nodes and set the message with text(): some
+     * messages come from the server and carry variable names taken from a
+     * call's stored data_object, which an admin controls. */
+    var alert = $('<div>').addClass('alert alert-' + alert_class);
+    $('<button>')
+        .attr('type', 'button')
+        .addClass('close')
+        .attr('data-dismiss', 'alert')
+        .html('&times;')
+        .appendTo(alert);
+    $('<p>').text(message).appendTo(alert);
+    $('#generated_messages_product').empty().append(alert);
 }
 
 function validate_field(field_name) {
@@ -96,6 +104,216 @@ function validate_field(field_name) {
         return false;
     }
 }
+
+function duplicate_field_count(field_name) {
+    // Grouped duplicate variables must not end in _<digit>.
+    var match = field_name.match(/_(\d+)$/);
+    return match ? parseInt(match[1], 10) : 0;
+}
+
+function duplicate_row_index(row) {
+    var index = row.attr('data-duplicate-index');
+    if (index !== undefined) {
+        return parseInt(index, 10) || 0;
+    }
+    var field = row.find(':input').first();
+    return field.length ? duplicate_field_count(field.attr('name')) : 0;
+}
+
+function duplicate_field_name(row, field_name, count) {
+    var base_name = row.attr('data-duplicate-base-name') ||
+        field_name.replace(/_\d+$/, '');
+    return base_name + '_' + (count + 1);
+}
+
+function duplicate_group_rows(table, group_name, count) {
+    return table.find('.duplicate-group-row').filter(function() {
+        var row = $(this);
+        var field = row.find(':input').first();
+        return (
+            row.attr('data-duplicate-group') === group_name &&
+            field.length &&
+            duplicate_row_index(row) === count
+        );
+    });
+}
+
+function update_duplicate_field(row, count) {
+    var field = row.find(':input').first();
+    var next_name = duplicate_field_name(
+        row,
+        field.attr('name'),
+        count
+    );
+    row.attr('data-duplicate-index', count + 1);
+    field.attr('name', next_name);
+    field.attr('id', next_name);
+    if (field.is('select')) {
+        if (!field.find('option[value=""]').length) {
+            field.prepend('<option value=""></option>');
+        }
+        field.val('');
+    } else {
+        field.val('');
+    }
+    row.find('.variable-name-cell').text(next_name);
+}
+
+/* How many rows the request can hold, read off the button. Stored
+ * placeholders are the real limit: extra rows are otherwise dropped. */
+function duplicate_group_max(button) {
+    return parseInt(button.attr('data-duplicate-max'), 10) || 0;
+}
+
+function duplicate_group_indexes(table, group_name) {
+    var indexes = [];
+    table.find('.duplicate-group-row').each(function() {
+        var row = $(this);
+        var field = row.find(':input').first();
+        if (
+            row.attr('data-duplicate-group') !== group_name ||
+            !field.length ||
+            !field.attr('name')
+        ) {
+            return;
+        }
+        var index = duplicate_row_index(row);
+        if (indexes.indexOf(index) === -1) {
+            indexes.push(index);
+        }
+    });
+    return indexes.sort(function(a, b) { return a - b; });
+}
+
+/* Derive both buttons from the rows that are actually present rather
+ * than toggling them as rows are added and removed. */
+function refresh_duplicate_group(table, group_name, max_index) {
+    var indexes = duplicate_group_indexes(table, group_name);
+    if (!indexes.length) {
+        return;
+    }
+    var highest = indexes[indexes.length - 1];
+    var last_rows = duplicate_group_rows(table, group_name, highest);
+
+    table.find('.duplicate-group-row').each(function() {
+        var row = $(this);
+        if (row.attr('data-duplicate-group') !== group_name) {
+            return;
+        }
+        row.find('.duplicate-field, .remove-field').hide();
+    });
+
+    if (highest < max_index) {
+        last_rows.find('.duplicate-field')
+            .show()
+            .attr('title', 'Add Row')
+            .removeAttr('data-original-title');
+    }
+    if (highest > 0) {
+        last_rows.find('.remove-field')
+            .show()
+            .attr('title', 'Remove Row')
+            .removeAttr('data-original-title');
+    }
+    $('.tooltip-title').tooltip();
+}
+
+function add_duplicate_group(button, group_name) {
+    var table = button.closest('table');
+    var max_index = duplicate_group_max(button);
+    var indexes = duplicate_group_indexes(table, group_name);
+    if (!indexes.length) {
+        return;
+    }
+
+    var highest = indexes[indexes.length - 1];
+    if (highest >= max_index) {
+        return;
+    }
+
+    var group_rows = duplicate_group_rows(table, group_name, highest);
+    if (!group_rows.length) {
+        return;
+    }
+
+    var clone_rows = group_rows.clone(true);
+    clone_rows.find('.tooltip-title').removeData('bs.tooltip');
+    clone_rows.each(function() {
+        update_duplicate_field($(this), highest);
+    });
+    group_rows.last().after(clone_rows);
+
+    refresh_duplicate_group(table, group_name, max_index);
+}
+
+function remove_duplicate_group(button, group_name) {
+    var table = button.closest('table');
+    var indexes = duplicate_group_indexes(table, group_name);
+    var highest = indexes.length ? indexes[indexes.length - 1] : 0;
+
+    if (highest < 1) {
+        return;
+    }
+
+    var last_rows = duplicate_group_rows(table, group_name, highest);
+    if (!last_rows.length) {
+        return;
+    }
+
+    var max_index = duplicate_group_max(
+        table.find('.duplicate-group-row .duplicate-field').filter(
+            function() {
+                return $(this).attr('data-duplicate-group') === group_name;
+            }
+        ).first()
+    );
+
+    last_rows.find('.tooltip-title').tooltip('destroy');
+    last_rows.remove();
+
+    refresh_duplicate_group(table, group_name, max_index);
+}
+
+$(document)
+    .off('click.duplicateRows', '.remove-field')
+    .on('click.duplicateRows', '.remove-field', function() {
+        $(this).tooltip('destroy');
+        var duplicate_group = $(this).attr('data-duplicate-group');
+        if (duplicate_group) {
+            remove_duplicate_group($(this), duplicate_group);
+        }
+    });
+
+$(document)
+    .off('click.duplicateRows', '.duplicate-field')
+    .on('click.duplicateRows', '.duplicate-field', function() {
+        $(this).tooltip('destroy');
+        var duplicate_group = $(this).attr('data-duplicate-group');
+        if (duplicate_group) {
+            add_duplicate_group($(this), duplicate_group);
+            return;
+        }
+
+        var parent_row = $(this).parent().parent();
+        var clone_row = $(this).parent().parent().clone(true);
+        var max_index = duplicate_group_max($(this));
+        var field_count = duplicate_row_index(parent_row);
+        if (field_count < max_index) {
+            clone_row.find('.tooltip-title').removeData('bs.tooltip');
+            update_duplicate_field(clone_row, field_count);
+            $(this).hide();
+
+            var duplicate = clone_row.find('.duplicate-field');
+            if ((field_count + 1) >= max_index) {
+                duplicate.hide();
+            } else {
+                duplicate.attr('title', 'Add Row');
+                duplicate.removeAttr('data-original-title');
+            }
+            parent_row.after(clone_row);
+            $('.tooltip-title').tooltip();
+        }
+    });
 
 function setup_toggle_details() {
     $('.row #toggle_details').click(function(e) {
@@ -198,6 +416,10 @@ function process_display_api_call(send_to, data, form_submit, form_value) {
 
     function error_process(result) {
         $('#loading_div_' + form_submit).hide();
+        var response = result.responseJSON || {};
+        var message = response.response_body ||
+            'There was an error processing the request';
+        show_product_message(message, 'error');
     }
 }
 

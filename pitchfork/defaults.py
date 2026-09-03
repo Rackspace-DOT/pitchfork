@@ -12,9 +12,876 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import OrderedDict
+from copy import deepcopy
 
 from flask_cloudadmin.defaults import check_and_initialize
 from config import config
+
+import json
+
+
+"""
+    How many association rows the bulk endpoints accept. The duplicate-row UI
+    names cloned inputs <variable>_1 ... <variable>_9, and
+    process_api_data_request can only fill placeholders that already exist in
+    data_object, so this count is what actually caps the rows a user can send.
+    Rows left blank are dropped from the array, so a wider body costs nothing.
+"""
+BULK_ROW_COUNT = 10
+BULK_API_CALL_SYNC_VERSION = 1
+
+
+def _bulk_data_object(fields, count=BULK_ROW_COUNT):
+    """Build a JSON array request body with one object per association row.
+
+    `fields` maps a position in the row to the variable that fills it, as
+    (path, variable_name) pairs, where path is a tuple of nested JSON keys::
+
+        [(('cloud_server', 'id'), 'cloud_server_id'), (('port',), 'port')]
+
+    The first row uses the bare variable name and row N appends _N, matching
+    the suffixes the duplicate-row UI gives cloned inputs. Ten hand-written
+    copies per call would be several hundred lines of near-identical string
+    concatenation, and easy to get subtly wrong.
+    """
+    rows = []
+    for index in range(count):
+        suffix = '' if index == 0 else '_%d' % index
+        row = OrderedDict()
+        for path, variable_name in fields:
+            target = row
+            for key in path[:-1]:
+                target = target.setdefault(key, OrderedDict())
+
+            target[path[-1]] = '{%s%s}' % (variable_name, suffix)
+
+        rows.append(row)
+
+    """ Bodies are stored with CRLF line endings. """
+    return json.dumps(rows, indent=4).replace('\n', '\r\n')
+
+
+LOAD_BALANCER_POOL_NODE_FIELDS = [
+    (('cloud_server', 'id'), 'cloud_server_id'),
+    (('load_balancer_pool', 'id'), 'load_balancer_pool_id')
+]
+
+
+LOAD_BALANCER_POOL_NODE_REMOVE_FIELDS = [
+    (('cloud_server', 'id'), 'cloud_server_id'),
+    (('load_balancer_pool', 'id'), 'load_balancer_pool_id')
+]
+
+
+SERVER_GROUP_NODE_FIELDS = [
+    (('cloud_server', 'id'), 'cloud_server_id'),
+    (('server_group', 'id'), 'server_group_id')
+]
+
+
+def _call_variable(
+    name,
+    description,
+    field_type='text',
+    required=True,
+    id_value=0,
+    field_display='TextField',
+    field_display_data='',
+    duplicate=False,
+    duplicate_group=''
+):
+    return {
+        'description': description,
+        'duplicate': duplicate,
+        'duplicate_group': duplicate_group,
+        'field_display': field_display,
+        'field_display_data': field_display_data,
+        'field_type': field_type,
+        'id_value': id_value,
+        'required': required,
+        'variable_name': name
+    }
+
+
+def _rackconnect_call(
+    title,
+    short_description,
+    verb,
+    api_uri,
+    group,
+    variables=None,
+    data_object='',
+    use_data=False
+):
+    call = {
+        'accessed': 0,
+        'add_to_header': False,
+        'allow_filter': False,
+        'api_uri': api_uri,
+        'change_content_type': False,
+        'custom_content_type': '',
+        'custom_header_key': '',
+        'custom_header_value': '',
+        'data_object': data_object,
+        'doc_url': 'https://rcv3.docs.apiary.io/',
+        'group': group,
+        'remove_content_type': False,
+        'remove_ddi': False,
+        'remove_token': False,
+        'required_key': False,
+        'required_key_name': '',
+        'required_key_type': '',
+        'short_description': short_description,
+        'tested': True,
+        'title': title,
+        'use_data': use_data,
+        'variables': variables or [],
+        'verb': verb
+    }
+    if (verb, api_uri) in RACKCONNECT_BULK_API_CALL_KEYS:
+        call['rackconnect_bulk_api_call_sync_version'] = (
+            BULK_API_CALL_SYNC_VERSION
+        )
+    return call
+
+
+RACKCONNECT_GROUPS = [
+    {
+        'slug': 'public_ips',
+        'name': 'Public IPs',
+        'order': 1
+    }, {
+        'order': 2,
+        'slug': 'load_balancer_pools',
+        'name': 'Load Balancer Pools'
+    }, {
+        'slug': 'networks',
+        'order': 3,
+        'name': 'Networks'
+    }, {
+        'slug': 'server_groups',
+        'order': 4,
+        'name': 'Server Groups'
+    }, {
+        'slug': 'match_rules',
+        'order': 5,
+        'name': 'Match Rules'
+    }
+]
+
+RACKCONNECT_BULK_API_CALL_KEYS = [
+    ('POST', '/v3/{ddi}/load_balancer_pools/nodes'),
+    ('DELETE', '/v3/{ddi}/load_balancer_pools/nodes'),
+    ('POST', '/v3/{ddi}/server_groups/nodes'),
+    ('DELETE', '/v3/{ddi}/server_groups/nodes')
+]
+
+
+RACKCONNECT_EXTRA_API_CALLS = [
+    _rackconnect_call(
+        'Add Nodes to Load Balancer Pools',
+        'Add multiple cloud servers to load balancer pools.',
+        'POST',
+        '/v3/{ddi}/load_balancer_pools/nodes',
+        'load_balancer_pools',
+        [
+            _call_variable(
+                'cloud_server_id',
+                'Cloud Server UUID',
+                id_value=0,
+                duplicate=True,
+                duplicate_group='load_balancer_pool_nodes'
+            ),
+            _call_variable(
+                'load_balancer_pool_id',
+                'Load balancer pool UUID',
+                id_value=1,
+                duplicate_group='load_balancer_pool_nodes'
+            )
+        ],
+        _bulk_data_object(LOAD_BALANCER_POOL_NODE_FIELDS),
+        True
+    ),
+    _rackconnect_call(
+        'Remove Nodes from Load Balancer Pools',
+        'Remove multiple cloud servers from load balancer pools.',
+        'DELETE',
+        '/v3/{ddi}/load_balancer_pools/nodes',
+        'load_balancer_pools',
+        [
+            _call_variable(
+                'cloud_server_id',
+                'Cloud Server UUID',
+                id_value=0,
+                duplicate=True,
+                duplicate_group='load_balancer_pool_nodes'
+            ),
+            _call_variable(
+                'load_balancer_pool_id',
+                'Load balancer pool UUID',
+                id_value=1,
+                duplicate_group='load_balancer_pool_nodes'
+            )
+        ],
+        _bulk_data_object(LOAD_BALANCER_POOL_NODE_REMOVE_FIELDS),
+        True
+    ),
+    _rackconnect_call(
+        'List All Public Ips By Retain Setting',
+        'List all public IP addresses filtered by retain setting.',
+        'GET',
+        '/v3/{ddi}/public_ips?retain={retain_bool}',
+        'public_ips',
+        [
+            _call_variable(
+                'retain_bool',
+                'Retain public IP setting',
+                field_type='text',
+                id_value=0,
+                field_display='SelectField',
+                field_display_data='true\r\nfalse'
+            )
+        ]
+    ),
+    _rackconnect_call(
+        'List All Server Groups',
+        'List all server groups for the cloud account.',
+        'GET',
+        '/v3/{ddi}/server_groups',
+        'server_groups'
+    ),
+    _rackconnect_call(
+        'Add-Provision Server Group',
+        'Add or provision a server group.',
+        'POST',
+        '/v3/{ddi}/server_groups',
+        'server_groups',
+        [
+            _call_variable(
+                'server_group_name',
+                'Server group name',
+                id_value=0
+            )
+        ],
+        (
+            '{\r\n'
+            '    "name": "{server_group_name}"\r\n'
+            '}'
+        ),
+        True
+    ),
+    _rackconnect_call(
+        'Retrieve A Server Group',
+        'Retrieve a specified server group.',
+        'GET',
+        '/v3/{ddi}/server_groups/{server_group_id}',
+        'server_groups',
+        [
+            _call_variable(
+                'server_group_id',
+                'Server group UUID',
+                id_value=0
+            )
+        ]
+    ),
+    _rackconnect_call(
+        'Remove Server Group',
+        'Remove a specified server group.',
+        'DELETE',
+        '/v3/{ddi}/server_groups/{server_group_id}',
+        'server_groups',
+        [
+            _call_variable(
+                'server_group_id',
+                'Server group UUID',
+                id_value=0
+            )
+        ]
+    ),
+    _rackconnect_call(
+        'List Server Group Nodes',
+        'List all nodes in a specified server group.',
+        'GET',
+        '/v3/{ddi}/server_groups/{server_group_id}/nodes',
+        'server_groups',
+        [
+            _call_variable(
+                'server_group_id',
+                'Server group UUID',
+                id_value=0
+            )
+        ]
+    ),
+    _rackconnect_call(
+        'Add Server Group Node',
+        'Add the specified cloud server to a server group.',
+        'POST',
+        '/v3/{ddi}/server_groups/{server_group_id}/nodes',
+        'server_groups',
+        [
+            _call_variable(
+                'server_group_id',
+                'Server group UUID',
+                id_value=0
+            ),
+            _call_variable(
+                'cloud_server_id',
+                'Cloud Server UUID',
+                id_value=1
+            )
+        ],
+        (
+            '{\r\n'
+            '    "cloud_server": {\r\n'
+            '        "id": "{cloud_server_id}"\r\n'
+            '    }\r\n'
+            '}'
+        ),
+        True
+    ),
+    _rackconnect_call(
+        'List Server Group Nodes With Details',
+        'List all nodes with details for a specified server group.',
+        'GET',
+        '/v3/{ddi}/server_groups/{server_group_id}/nodes/details',
+        'server_groups',
+        [
+            _call_variable(
+                'server_group_id',
+                'Server group UUID',
+                id_value=0
+            )
+        ]
+    ),
+    _rackconnect_call(
+        'Retrieve Server Group Node',
+        'Retrieve a specified server group node.',
+        'GET',
+        '/v3/{ddi}/server_groups/{server_group_id}/nodes/{node_id}',
+        'server_groups',
+        [
+            _call_variable(
+                'server_group_id',
+                'Server group UUID',
+                id_value=0
+            ),
+            _call_variable(
+                'node_id',
+                'Server group node UUID',
+                id_value=1
+            )
+        ]
+    ),
+    _rackconnect_call(
+        'Remove Server Group Node',
+        'Remove a specified server group node.',
+        'DELETE',
+        '/v3/{ddi}/server_groups/{server_group_id}/nodes/{node_id}',
+        'server_groups',
+        [
+            _call_variable(
+                'server_group_id',
+                'Server group UUID',
+                id_value=0
+            ),
+            _call_variable(
+                'node_id',
+                'Server group node UUID',
+                id_value=1
+            )
+        ]
+    ),
+    _rackconnect_call(
+        'Retrieve Server Group Node With Details',
+        'Retrieve details for a specified server group node.',
+        'GET',
+        '/v3/{ddi}/server_groups/{server_group_id}/nodes/{node_id}/details',
+        'server_groups',
+        [
+            _call_variable(
+                'server_group_id',
+                'Server group UUID',
+                id_value=0
+            ),
+            _call_variable(
+                'node_id',
+                'Server group node UUID',
+                id_value=1
+            )
+        ]
+    ),
+    _rackconnect_call(
+        'Add Nodes to Server Groups',
+        'Add multiple cloud servers to server groups.',
+        'POST',
+        '/v3/{ddi}/server_groups/nodes',
+        'server_groups',
+        [
+            _call_variable(
+                'cloud_server_id',
+                'Cloud Server UUID',
+                id_value=0,
+                duplicate=True,
+                duplicate_group='server_group_nodes'
+            ),
+            _call_variable(
+                'server_group_id',
+                'Server group UUID',
+                id_value=1,
+                duplicate_group='server_group_nodes'
+            )
+        ],
+        _bulk_data_object(SERVER_GROUP_NODE_FIELDS),
+        True
+    ),
+    _rackconnect_call(
+        'Remove Nodes from Server Groups',
+        'Remove multiple cloud servers from server groups.',
+        'DELETE',
+        '/v3/{ddi}/server_groups/nodes',
+        'server_groups',
+        [
+            _call_variable(
+                'cloud_server_id',
+                'Cloud Server UUID',
+                id_value=0,
+                duplicate=True,
+                duplicate_group='server_group_nodes'
+            ),
+            _call_variable(
+                'server_group_id',
+                'Server group UUID',
+                id_value=1,
+                duplicate_group='server_group_nodes'
+            )
+        ],
+        _bulk_data_object(SERVER_GROUP_NODE_FIELDS),
+        True
+    ),
+    _rackconnect_call(
+        'List Server Group Nodes With Details For Cloud Server',
+        'List server group nodes with details for a cloud server.',
+        'GET',
+        (
+            '/v3/{ddi}/server_groups/nodes/details'
+            '?cloud_server_id={cloud_server_id}'
+        ),
+        'server_groups',
+        [
+            _call_variable(
+                'cloud_server_id',
+                'Cloud Server UUID',
+                id_value=0
+            )
+        ]
+    ),
+    _rackconnect_call(
+        'List Match Rules For Cloud Account',
+        'List match rules for the cloud account.',
+        'GET',
+        '/v3/{ddi}/match_rules',
+        'match_rules'
+    ),
+    _rackconnect_call(
+        'Add Match Rules For Cloud Account',
+        'Add match rules for the cloud account.',
+        'POST',
+        '/v3/{ddi}/match_rules',
+        'match_rules',
+        [
+            _call_variable(
+                'match_rule_name',
+                'Match rule name',
+                id_value=0
+            ),
+            _call_variable(
+                'match_criteria_type_id',
+                'Match criteria type ID',
+                field_type='integer',
+                id_value=1
+            ),
+            _call_variable(
+                'match_criteria_value',
+                'Match criteria value',
+                id_value=2
+            ),
+            _call_variable(
+                'match_action_type_id',
+                'Match action type ID',
+                field_type='integer',
+                id_value=3
+            ),
+            _call_variable(
+                'match_action_value',
+                'Match action value',
+                id_value=4
+            ),
+            _call_variable(
+                'refresh_servers',
+                'Refresh servers after creating the match rule',
+                field_type='boolean',
+                required=False,
+                id_value=5,
+                field_display='SelectField',
+                field_display_data='True\r\nFalse'
+            ),
+            _call_variable(
+                'cloud_ddi_account',
+                'Cloud account DDI',
+                field_type='text/integer',
+                id_value=6
+            )
+        ],
+        (
+            '[\r\n'
+            '    {\r\n'
+            '        "cloud_ddi_account": "{cloud_ddi_account}",\r\n'
+            '        "region": "{region}",\r\n'
+            '        "match_rule_name": "{match_rule_name}",\r\n'
+            '        "match_criteria_type_id": "{match_criteria_type_id}",\r\n'
+            '        "match_criteria_value": "{match_criteria_value}",\r\n'
+            '        "match_actions": [\r\n'
+            '            {\r\n'
+            '                "match_action_type_id": '
+            '"{match_action_type_id}",\r\n'
+            '                "match_action_value": "{match_action_value}"\r\n'
+            '            }\r\n'
+            '        ],\r\n'
+            '        "refresh_servers": "{refresh_servers}"\r\n'
+            '    }\r\n'
+            ']'
+        ),
+        True
+    ),
+    _rackconnect_call(
+        'List Match Rule By Id',
+        'Retrieve details for a specified match rule.',
+        'GET',
+        '/v3/{ddi}/match_rules/details/{match_rule_id}',
+        'match_rules',
+        [
+            _call_variable(
+                'match_rule_id',
+                'Match rule UUID',
+                id_value=0
+            )
+        ]
+    ),
+    _rackconnect_call(
+        'Add Match Action To Match Rule',
+        'Add a match action to a match rule.',
+        'POST',
+        '/v3/{ddi}/match_rules/rule_actions',
+        'match_rules',
+        [
+            _call_variable(
+                'match_rule_id',
+                'Match rule UUID',
+                id_value=0
+            ),
+            _call_variable(
+                'match_action_type_id',
+                'Match action type ID',
+                field_type='integer',
+                id_value=1
+            ),
+            _call_variable(
+                'match_action_value',
+                'Match action value',
+                id_value=2
+            )
+        ],
+        (
+            '[\r\n'
+            '    {\r\n'
+            '        "match_rule_id": "{match_rule_id}",\r\n'
+            '        "match_action_type_id": "{match_action_type_id}",\r\n'
+            '        "match_action_value": "{match_action_value}"\r\n'
+            '    }\r\n'
+            ']'
+        ),
+        True
+    ),
+    _rackconnect_call(
+        'Update Match Rule',
+        'Update a match rule.',
+        'POST',
+        '/v3/{ddi}/match_rules/update_rule',
+        'match_rules',
+        [
+            _call_variable(
+                'match_rule_id',
+                'Match rule UUID',
+                id_value=0
+            ),
+            _call_variable(
+                'match_rule_name',
+                'Match rule name',
+                id_value=1
+            ),
+            _call_variable(
+                'match_criteria_type_id',
+                'Match criteria type ID',
+                field_type='integer',
+                id_value=2
+            ),
+            _call_variable(
+                'match_criteria_value',
+                'Match criteria value',
+                id_value=3
+            ),
+            _call_variable(
+                'cloud_account_match_action_uuid',
+                'Cloud account match action UUID',
+                id_value=4
+            ),
+            _call_variable(
+                'match_action_type_id',
+                'Match action type ID',
+                field_type='integer',
+                id_value=5
+            ),
+            _call_variable(
+                'match_action_value',
+                'Match action value; enter null literally to send JSON null',
+                required=False,
+                id_value=6
+            ),
+            _call_variable(
+                'cloud_ddi_account',
+                'Cloud account DDI',
+                field_type='text/integer',
+                id_value=7
+            )
+        ],
+        (
+            '{\r\n'
+            '    "match_rule_id": "{match_rule_id}",\r\n'
+            '    "cloud_ddi_account": "{cloud_ddi_account}",\r\n'
+            '    "region": "{region}",\r\n'
+            '    "match_rule_name": "{match_rule_name}",\r\n'
+            '    "match_criteria_type_id": "{match_criteria_type_id}",\r\n'
+            '    "match_criteria_value": "{match_criteria_value}",\r\n'
+            '    "match_actions": [\r\n'
+            '        {\r\n'
+            '            "cloud_account_match_action_uuid": '
+            '"{cloud_account_match_action_uuid}",\r\n'
+            '            "match_rule_id": "{match_rule_id}",\r\n'
+            '            "match_action_type_id": "{match_action_type_id}",\r\n'
+            '            "match_action_value": "{match_action_value}"\r\n'
+            '        }\r\n'
+            '    ]\r\n'
+            '}'
+        ),
+        True
+    ),
+    _rackconnect_call(
+        'Remove Match Rule For Cloud Account',
+        'Remove a match rule for the cloud account.',
+        'DELETE',
+        '/v3/{ddi}/match_rules/{match_rule_id}',
+        'match_rules',
+        [
+            _call_variable(
+                'match_rule_id',
+                'Match rule UUID',
+                id_value=0
+            )
+        ]
+    ),
+    _rackconnect_call(
+        'Remove Action Rule From Match Rule',
+        'Remove an action rule from a match rule.',
+        'DELETE',
+        '/v3/{ddi}/match_rules/{match_rule_id}/rule_actions/{match_action_id}',
+        'match_rules',
+        [
+            _call_variable(
+                'match_rule_id',
+                'Match rule UUID',
+                id_value=0
+            ),
+            _call_variable(
+                'match_action_id',
+                'Match action UUID',
+                id_value=1
+            )
+        ]
+    )
+]
+
+
+MONITORING_PRIVATE_ZONE_CALL = {
+    'accessed': 0,
+    'add_to_header': False,
+    'allow_filter': False,
+    'api_uri': '/v1.0/{ddi}/monitoring_zones',
+    'change_content_type': False,
+    'custom_content_type': '',
+    'custom_header_key': '',
+    'custom_header_value': '',
+    'data_object': (
+        '{\r\n'
+        '    "label": "{label}",\r\n'
+        '    "maximum_checks": "{maximum_checks}",\r\n'
+        '    "maximum_agents": "{maximum_agents}",\r\n'
+        '    "disable": "{disable}",\r\n'
+        '    "metadata": {\r\n'
+        '        "{metadata_key}": "{metadata_value}"\r\n'
+        '    }\r\n'
+        '}'
+    ),
+    'doc_url': 'https://docs-ospc.rackspace.com/',
+    'group': 'zones',
+    'remove_content_type': False,
+    'remove_ddi': False,
+    'remove_token': False,
+    'required_key': False,
+    'required_key_name': '',
+    'required_key_type': '',
+    'short_description': 'Create a private monitoring zone',
+    'tested': True,
+    'title': 'Create Private Monitoring Zone',
+    'use_data': True,
+    'variables': [
+        {
+            'description': 'Label for the monitoring zone',
+            'duplicate': False,
+            'field_display': 'TextField',
+            'field_display_data': '',
+            'field_type': 'text',
+            'id_value': 0,
+            'required': True,
+            'variable_name': 'label'
+        }, {
+            'description': 'Maximum number of checks for the zone',
+            'duplicate': False,
+            'field_display': 'TextField',
+            'field_display_data': '',
+            'field_type': 'integer',
+            'id_value': 1,
+            'required': False,
+            'variable_name': 'maximum_checks'
+        }, {
+            'description': 'Maximum number of agents for the zone',
+            'duplicate': False,
+            'field_display': 'TextField',
+            'field_display_data': '',
+            'field_type': 'integer',
+            'id_value': 2,
+            'required': False,
+            'variable_name': 'maximum_agents'
+        }, {
+            'description': 'Disable the monitoring zone',
+            'duplicate': False,
+            'field_display': 'SelectField',
+            'field_display_data': 'True\r\nFalse',
+            'field_type': 'boolean',
+            'id_value': 3,
+            'required': False,
+            'variable_name': 'disable'
+        }, {
+            'description': 'Metadata key',
+            'duplicate': False,
+            'field_display': 'TextField',
+            'field_display_data': '',
+            'field_type': 'text',
+            'id_value': 4,
+            'required': False,
+            'variable_name': 'metadata_key'
+        }, {
+            'description': 'Metadata value',
+            'duplicate': False,
+            'field_display': 'TextField',
+            'field_display_data': '',
+            'field_type': 'text',
+            'id_value': 5,
+            'required': False,
+            'variable_name': 'metadata_value'
+        }
+    ],
+    'verb': 'POST'
+}
+
+
+def ensure_default_api_calls(db):
+    ensure_api_call(db.monitoring, MONITORING_PRIVATE_ZONE_CALL)
+    ensure_product_groups(db, 'rackconnect', RACKCONNECT_GROUPS)
+    for api_call in RACKCONNECT_EXTRA_API_CALLS:
+        ensure_api_call(db.rack_connect, api_call)
+    sync_rackconnect_bulk_api_calls(db)
+
+
+def ensure_api_call(collection, api_call):
+    query = {
+        'api_uri': api_call.get('api_uri'),
+        'verb': api_call.get('verb')
+    }
+    if collection.find_one(query) is None:
+        collection.insert(deepcopy(api_call))
+
+
+def sync_rackconnect_bulk_api_calls(db):
+    for api_call in RACKCONNECT_EXTRA_API_CALLS:
+        key = (api_call.get('verb'), api_call.get('api_uri'))
+        if key not in RACKCONNECT_BULK_API_CALL_KEYS:
+            continue
+
+        query = {
+            'api_uri': api_call.get('api_uri'),
+            'verb': api_call.get('verb')
+        }
+        existing_call = db.rack_connect.find_one(query)
+        if existing_call is None:
+            continue
+        if existing_call.get(
+            'rackconnect_bulk_api_call_sync_version'
+        ) == BULK_API_CALL_SYNC_VERSION:
+            continue
+
+        db.rack_connect.update(
+            query, {
+                '$set': {
+                    'data_object': deepcopy(api_call.get('data_object')),
+                    'variables': deepcopy(api_call.get('variables')),
+                    'rackconnect_bulk_api_call_sync_version': (
+                        BULK_API_CALL_SYNC_VERSION
+                    )
+                }
+            }
+        )
+
+
+def ensure_product_groups(db, product_key, groups):
+    settings = db.api_settings.find_one({})
+    if not settings or not settings.get(product_key):
+        return
+
+    product = settings.get(product_key)
+    existing_groups = product.get('groups') or []
+    existing_slugs = [
+        group.get('slug')
+        for group in existing_groups
+    ]
+    updated_groups = list(existing_groups)
+    changed = False
+
+    for group in groups:
+        if group.get('slug') not in existing_slugs:
+            updated_groups.append(deepcopy(group))
+            existing_slugs.append(group.get('slug'))
+            changed = True
+
+    if changed:
+        db.api_settings.update(
+            {},
+            {
+                '$set': {
+                    '%s.groups' % product_key: updated_groups
+                }
+            }
+        )
 
 
 def application_initialize(db, app):
@@ -1375,21 +2242,7 @@ def application_initialize(db, app):
                         'https://{region}.rackconnect.api.rackspacecloud.com'
                     ),
                     'db_name': 'rack_connect',
-                    'groups': [
-                        {
-                            'slug': 'public_ips',
-                            'name': 'Public IPs',
-                            'order': 1
-                        }, {
-                            'order': 2,
-                            'slug': 'load_balancer_pools',
-                            'name': 'Load Balancer Pools'
-                        }, {
-                            'slug': 'networks',
-                            'order': 3,
-                            'name': 'Networks'
-                        }
-                    ],
+                    'groups': deepcopy(RACKCONNECT_GROUPS),
                     'uk_api': (
                         'https://{region}.rackconnect.api.rackspacecloud.com'
                     ),
@@ -1632,6 +2485,8 @@ def application_initialize(db, app):
                 ]
             }
         )
+
+    ensure_default_api_calls(db)
 
     if reporting is None:
         db.reporting.insert(

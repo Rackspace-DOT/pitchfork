@@ -1,0 +1,1192 @@
+
+import json
+import os
+import re
+import sys
+import types
+import unittest
+from copy import deepcopy
+
+try:
+    import importlib.util
+except Exception:
+    importlib = None
+    import imp
+
+
+admin_defaults = types.ModuleType('flask_cloudadmin.defaults')
+admin_defaults.check_and_initialize = lambda app, database: {
+    'application_set': True
+}
+sys.modules['flask_cloudadmin'] = types.ModuleType('flask_cloudadmin')
+sys.modules['flask_cloudadmin.defaults'] = admin_defaults
+
+config_module = types.ModuleType('config')
+
+
+class TestConfig(object):
+    ADMIN_USERNAME = 'admin'
+    ADMIN_NAME = 'Admin'
+    ADMIN_EMAIL = 'admin@example.com'
+
+
+config_module.config = TestConfig()
+sys.modules['config'] = config_module
+
+DEFAULTS_PATH = os.path.join(
+    os.path.dirname(__file__),
+    '..',
+    'pitchfork',
+    'defaults.py'
+)
+HELPER_PATH = os.path.join(
+    os.path.dirname(__file__),
+    '..',
+    'pitchfork',
+    'helper.py'
+)
+MODELS_PATH = os.path.join(
+    os.path.dirname(__file__),
+    '..',
+    'pitchfork',
+    'models.py'
+)
+
+if importlib is not None:
+    spec = importlib.util.spec_from_file_location(
+        'pitchfork_defaults_for_tests',
+        DEFAULTS_PATH
+    )
+    defaults = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(defaults)
+else:
+    defaults = imp.load_source('pitchfork_defaults_for_tests', DEFAULTS_PATH)
+
+
+def load_helper_module():
+    module_names = [
+        'pitchfork',
+        'pitchfork.models',
+        'pitchfork.forms',
+        'pitchfork.cloud_dns_export',
+        'pitchfork.url_safety',
+        'models',
+        'forms',
+        'url_safety'
+    ]
+    old_modules = {
+        name: sys.modules[name] for name in module_names
+        if name in sys.modules
+    }
+
+    try:
+        pitchfork = types.ModuleType('pitchfork')
+        pitchfork.__path__ = []
+        sys.modules['pitchfork'] = pitchfork
+
+        models = types.ModuleType('pitchfork.models')
+        models.Variable = object
+        sys.modules['pitchfork.models'] = models
+        sys.modules['models'] = models
+        sys.modules['pitchfork.forms'] = types.ModuleType('pitchfork.forms')
+        sys.modules['forms'] = sys.modules['pitchfork.forms']
+        sys.modules['pitchfork.cloud_dns_export'] = types.ModuleType(
+            'pitchfork.cloud_dns_export'
+        )
+
+        url_safety = types.ModuleType('pitchfork.url_safety')
+
+        class UnsafeOutboundRequest(Exception):
+            pass
+
+        def noop(*args, **kwargs):
+            return None
+
+        url_safety.UnsafeOutboundRequest = UnsafeOutboundRequest
+        for name in [
+            '_has_userinfo',
+            '_is_private_ipv4',
+            '_is_private_ipv6',
+            '_is_private_host',
+            '_validate_outbound_url',
+            '_build_api_url',
+            '_validate_endpoint_hostname',
+            'sanitize_query_filter'
+        ]:
+            setattr(url_safety, name, noop)
+        sys.modules['pitchfork.url_safety'] = url_safety
+        sys.modules['url_safety'] = url_safety
+
+        if importlib is None:
+            return imp.load_source('pitchfork_helper_for_tests', HELPER_PATH)
+
+        spec = importlib.util.spec_from_file_location(
+            'pitchfork_helper_for_tests',
+            HELPER_PATH
+        )
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        return helper
+    finally:
+        for name in module_names:
+            if name in old_modules:
+                sys.modules[name] = old_modules[name]
+            else:
+                sys.modules.pop(name, None)
+
+
+def load_models_module():
+    if importlib is None:
+        return imp.load_source('pitchfork_models_for_tests', MODELS_PATH)
+
+    spec = importlib.util.spec_from_file_location(
+        'pitchfork_models_for_tests',
+        MODELS_PATH
+    )
+    models = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(models)
+    return models
+
+
+class FakeCollection(object):
+    def __init__(self, docs=None):
+        self.docs = docs or []
+        self.inserted = []
+        self.updated = []
+
+    def find_one(self, query=None):
+        query = query or {}
+        for doc in self.docs:
+            matches = True
+            for key, value in query.items():
+                if doc.get(key) != value:
+                    matches = False
+                    break
+            if matches:
+                return doc
+        return None
+
+    def insert(self, doc):
+        self.docs.append(doc)
+        self.inserted.append(doc)
+        return 'inserted-id'
+
+    def update(self, query, update):
+        self.updated.append((query, update))
+        doc = self.find_one(query)
+        if doc is None:
+            return
+        set_values = update.get('$set', {})
+        for key, value in set_values.items():
+            parts = key.split('.')
+            target = doc
+            for part in parts[:-1]:
+                target = target.setdefault(part, {})
+            target[parts[-1]] = value
+
+
+class FakeDb(object):
+    def __init__(
+        self,
+        monitoring_docs=None,
+        rackconnect_docs=None,
+        api_settings_docs=None
+    ):
+        self.monitoring = FakeCollection(monitoring_docs)
+        self.rack_connect = FakeCollection(rackconnect_docs)
+        self.api_settings = FakeCollection(
+            api_settings_docs or [
+                {
+                    'rackconnect': {
+                        'groups': [
+                            {
+                                'slug': 'public_ips',
+                                'name': 'Public IPs',
+                                'order': 1
+                            }, {
+                                'slug': 'load_balancer_pools',
+                                'name': 'Load Balancer Pools',
+                                'order': 2
+                            }, {
+                                'slug': 'networks',
+                                'name': 'Networks',
+                                'order': 3
+                            }
+                        ]
+                    }
+                }
+            ]
+        )
+
+
+class DefaultsTests(unittest.TestCase):
+    def rackconnect_docs_with_pr67_bulk_calls(self):
+        docs = deepcopy(defaults.RACKCONNECT_EXTRA_API_CALLS)
+        for doc in docs:
+            key = (doc.get('verb'), doc.get('api_uri'))
+            if key not in defaults.RACKCONNECT_BULK_API_CALL_KEYS:
+                continue
+            for variable in doc.get('variables'):
+                variable['duplicate'] = False
+                variable['duplicate_group'] = ''
+            doc['data_object'] = doc.get('data_object').split('    },')[0] + (
+                '    }\r\n]'
+            )
+            doc.pop('rackconnect_bulk_api_call_sync_version', None)
+        return docs
+
+    def test_ensure_default_api_calls_adds_monitoring_private_zone_call(self):
+        db = FakeDb()
+
+        defaults.ensure_default_api_calls(db)
+
+        self.assertEqual(len(db.monitoring.inserted), 1)
+        inserted = db.monitoring.inserted[0]
+        self.assertEqual(
+            inserted.get('title'),
+            'Create Private Monitoring Zone'
+        )
+        self.assertEqual(inserted.get('verb'), 'POST')
+        self.assertEqual(
+            inserted.get('api_uri'),
+            '/v1.0/{ddi}/monitoring_zones'
+        )
+        self.assertEqual(inserted.get('group'), 'zones')
+        self.assertTrue(inserted.get('tested'))
+        self.assertTrue(inserted.get('use_data'))
+
+        variable_names = [
+            variable.get('variable_name')
+            for variable in inserted.get('variables')
+        ]
+        self.assertEqual(
+            variable_names,
+            [
+                'label',
+                'maximum_checks',
+                'maximum_agents',
+                'disable',
+                'metadata_key',
+                'metadata_value'
+            ]
+        )
+
+        request_body = json.loads(inserted.get('data_object'))
+        self.assertEqual(request_body.get('label'), '{label}')
+        self.assertEqual(
+            request_body.get('maximum_checks'),
+            '{maximum_checks}'
+        )
+        self.assertEqual(
+            request_body.get('maximum_agents'),
+            '{maximum_agents}'
+        )
+        self.assertEqual(request_body.get('disable'), '{disable}')
+        self.assertEqual(
+            request_body.get('metadata'),
+            {'{metadata_key}': '{metadata_value}'}
+        )
+
+    def test_keeps_existing_monitoring_zone_call(self):
+        existing = {
+            'api_uri': '/v1.0/{ddi}/monitoring_zones',
+            'verb': 'POST',
+            'title': 'Existing Call'
+        }
+        db = FakeDb([existing])
+
+        defaults.ensure_default_api_calls(db)
+
+        self.assertEqual(db.monitoring.inserted, [])
+        self.assertEqual(db.monitoring.docs, [existing])
+
+    def test_ensure_default_api_calls_adds_rackconnect_groups(self):
+        db = FakeDb()
+
+        defaults.ensure_default_api_calls(db)
+
+        settings = db.api_settings.docs[0]
+        groups = settings.get('rackconnect').get('groups')
+        slugs = [group.get('slug') for group in groups]
+        self.assertIn('server_groups', slugs)
+        self.assertIn('match_rules', slugs)
+
+    def test_ensure_default_api_calls_adds_missing_rackconnect_calls(self):
+        db = FakeDb()
+
+        defaults.ensure_default_api_calls(db)
+
+        calls = db.rack_connect.inserted
+        api_calls = [
+            (call.get('verb'), call.get('api_uri'), call.get('title'))
+            for call in calls
+        ]
+        self.assertIn(
+            (
+                'GET',
+                '/v3/{ddi}/server_groups',
+                'List All Server Groups'
+            ),
+            api_calls
+        )
+        self.assertIn(
+            (
+                'GET',
+                '/v3/{ddi}/match_rules/details/{match_rule_id}',
+                'List Match Rule By Id'
+            ),
+            api_calls
+        )
+        self.assertIn(
+            (
+                'POST',
+                '/v3/{ddi}/load_balancer_pools/nodes',
+                'Add Nodes to Load Balancer Pools'
+            ),
+            api_calls
+        )
+        bulk_calls = [
+            call for call in calls
+            if (call.get('verb'), call.get('api_uri'))
+            in defaults.RACKCONNECT_BULK_API_CALL_KEYS
+        ]
+        self.assertEqual(len(bulk_calls), 4)
+        self.assertTrue(all(
+            call.get('rackconnect_bulk_api_call_sync_version') ==
+            defaults.BULK_API_CALL_SYNC_VERSION
+            for call in bulk_calls
+        ))
+        self.assertEqual(db.rack_connect.updated, [])
+
+    def test_second_boot_does_not_rewrite_fresh_bulk_inserts(self):
+        db = FakeDb()
+        defaults.ensure_default_api_calls(db)
+        target = db.rack_connect.find_one({
+            'api_uri': '/v3/{ddi}/load_balancer_pools/nodes',
+            'verb': 'POST'
+        })
+        target['data_object'] = 'admin custom body'
+        db.rack_connect.inserted = []
+        db.rack_connect.updated = []
+
+        defaults.ensure_default_api_calls(db)
+
+        self.assertEqual(db.rack_connect.inserted, [])
+        self.assertEqual(db.rack_connect.updated, [])
+        self.assertEqual(target.get('data_object'), 'admin custom body')
+
+    def test_does_not_duplicate_rackconnect_call(self):
+        existing = {
+            'api_uri': '/v3/{ddi}/server_groups',
+            'verb': 'GET',
+            'title': 'Existing RackConnect Call'
+        }
+        db = FakeDb(rackconnect_docs=[existing])
+
+        defaults.ensure_default_api_calls(db)
+
+        duplicate_calls = [
+            call for call in db.rack_connect.inserted
+            if (
+                call.get('api_uri') == '/v3/{ddi}/server_groups' and
+                call.get('verb') == 'GET'
+            )
+        ]
+        self.assertEqual(duplicate_calls, [])
+
+    def test_updates_existing_rackconnect_bulk_calls(self):
+        docs = self.rackconnect_docs_with_pr67_bulk_calls()
+        db = FakeDb(rackconnect_docs=docs)
+
+        defaults.ensure_default_api_calls(db)
+
+        self.assertEqual(db.rack_connect.inserted, [])
+        self.assertEqual(len(db.rack_connect.updated), 4)
+        updated = db.rack_connect.find_one({
+            'api_uri': '/v3/{ddi}/load_balancer_pools/nodes',
+            'verb': 'POST'
+        })
+        variables = updated.get('variables')
+        self.assertTrue(variables[0].get('duplicate'))
+        self.assertEqual(
+            variables[0].get('duplicate_group'),
+            'load_balancer_pool_nodes'
+        )
+        self.assertEqual(
+            variables[1].get('duplicate_group'),
+            'load_balancer_pool_nodes'
+        )
+        self.assertIn('cloud_server_id_2', updated.get('data_object'))
+        self.assertEqual(
+            updated.get('rackconnect_bulk_api_call_sync_version'),
+            defaults.BULK_API_CALL_SYNC_VERSION
+        )
+
+    def test_does_not_rewrite_synced_rackconnect_bulk_calls(self):
+        docs = self.rackconnect_docs_with_pr67_bulk_calls()
+        for doc in docs:
+            doc['rackconnect_bulk_api_call_sync_version'] = (
+                defaults.BULK_API_CALL_SYNC_VERSION
+            )
+            if doc.get('api_uri') == '/v3/{ddi}/load_balancer_pools/nodes':
+                doc['data_object'] = 'admin custom body'
+        db = FakeDb(rackconnect_docs=docs)
+
+        defaults.sync_rackconnect_bulk_api_calls(db)
+
+        updated = db.rack_connect.find_one({
+            'api_uri': '/v3/{ddi}/load_balancer_pools/nodes',
+            'verb': 'POST'
+        })
+        self.assertEqual(db.rack_connect.updated, [])
+        self.assertEqual(updated.get('data_object'), 'admin custom body')
+
+    def test_updates_only_allowlisted_rackconnect_bulk_calls(self):
+        server_groups = {
+            'api_uri': '/v3/{ddi}/server_groups',
+            'verb': 'GET',
+            'title': 'Custom Admin Title',
+            'variables': [],
+            'data_object': 'custom'
+        }
+        bulk_call = {
+            'api_uri': '/v3/{ddi}/server_groups/nodes',
+            'verb': 'DELETE',
+            'title': 'Remove Nodes from Server Groups',
+            'variables': [
+                {
+                    'variable_name': 'cloud_server_id',
+                    'duplicate': False,
+                    'duplicate_group': ''
+                }, {
+                    'variable_name': 'server_group_id',
+                    'duplicate': False,
+                    'duplicate_group': ''
+                }
+            ],
+            'data_object': 'custom bulk'
+        }
+        db = FakeDb(rackconnect_docs=[server_groups, bulk_call])
+
+        defaults.sync_rackconnect_bulk_api_calls(db)
+
+        self.assertEqual(server_groups.get('title'), 'Custom Admin Title')
+        self.assertEqual(server_groups.get('data_object'), 'custom')
+        self.assertEqual(len(db.rack_connect.updated), 1)
+        self.assertEqual(
+            bulk_call.get('variables')[0].get('duplicate_group'),
+            'server_group_nodes'
+        )
+
+    def test_rackconnect_extra_calls_use_pitchfork_endpoint_shape(self):
+        for call in defaults.RACKCONNECT_EXTRA_API_CALLS:
+            self.assertTrue(call.get('api_uri').startswith('/v3/{ddi}/'))
+            self.assertNotIn('{tenant_id}', call.get('api_uri'))
+            self.assertNotIn('{tenatn_id}', call.get('api_uri'))
+
+    def test_rackconnect_retain_filter_uses_lowercase_text_value(self):
+        calls = [
+            call for call in defaults.RACKCONNECT_EXTRA_API_CALLS
+            if call.get('api_uri') == (
+                '/v3/{ddi}/public_ips?retain={retain_bool}'
+            )
+        ]
+
+        self.assertEqual(len(calls), 1)
+        variable = calls[0].get('variables')[0]
+        self.assertEqual(variable.get('field_type'), 'text')
+        self.assertEqual(variable.get('field_display_data'), 'true\r\nfalse')
+
+    def test_match_rules_render_cloud_ddi_account_as_integer(self):
+        helper = load_helper_module()
+        json_data = {
+            'cloud_ddi_account': '123456',
+            'region': 'dfw',
+            'match_rule_id': 'match-rule-id',
+            'match_rule_name': 'match-rule',
+            'match_criteria_type_id': '1',
+            'match_criteria_value': 'criteria',
+            'match_action_type_id': '2',
+            'match_action_value': 'action',
+            'refresh_servers': 'True',
+            'cloud_account_match_action_uuid': 'match-action-id'
+        }
+
+        calls = [
+            call for call in defaults.RACKCONNECT_EXTRA_API_CALLS
+            if call.get('title') in [
+                'Add Match Rules For Cloud Account',
+                'Update Match Rule'
+            ]
+        ]
+
+        self.assertEqual(len(calls), 2)
+        for call in calls:
+            data = helper.process_api_data_request(call, json_data)
+            if isinstance(data, list):
+                data = data[0]
+            self.assertEqual(data.get('cloud_ddi_account'), 123456)
+
+    def test_scalar_data_object_missing_value_renders_nothing(self):
+        helper = load_helper_module()
+        call = {'data_object': '"{ddi}"'}
+
+        self.assertIsNone(helper.process_api_data_request(call, {}))
+
+    def test_scalar_data_object_replaces_multiple_placeholders(self):
+        helper = load_helper_module()
+        call = {'data_object': '"{ddi}-{region}"'}
+
+        self.assertEqual(
+            helper.process_api_data_request(
+                call,
+                {'ddi': '12345', 'region': 'DFW'}
+            ),
+            '12345-DFW'
+        )
+
+    def test_scalar_data_object_replaces_embedded_placeholder(self):
+        helper = load_helper_module()
+        call = {'data_object': '"prefix-{ddi}"'}
+
+        self.assertEqual(
+            helper.process_api_data_request(call, {'ddi': '12345'}),
+            'prefix-12345'
+        )
+
+    def test_scalar_data_object_keeps_backslashes_literal(self):
+        helper = load_helper_module()
+        call = {'data_object': '"{ddi}"'}
+
+        self.assertEqual(
+            helper.process_api_data_request(call, {'ddi': r'abc\1'}),
+            r'abc\1'
+        )
+
+    def test_sanitize_data_for_mongo_preserves_lists(self):
+        helper = load_helper_module()
+
+        class CompatDict(dict):
+            def iteritems(self):
+                return self.items()
+
+        sanitized = helper.sanitize_data_for_mongo(
+            CompatDict({'ids': ['one.two'], 'name': 'a.b'})
+        )
+
+        self.assertEqual(sanitized.get('ids'), ['one.two'])
+        self.assertEqual(sanitized.get('name'), 'a&#46;b')
+
+    def test_bulk_load_balancer_pool_nodes_render_multiple_rows(self):
+        helper = load_helper_module()
+        call = next(
+            call for call in defaults.RACKCONNECT_EXTRA_API_CALLS
+            if call.get('title') == 'Add Nodes to Load Balancer Pools'
+        )
+        json_data = {
+            'cloud_server_id': 'server-0',
+            'load_balancer_pool_id': 'pool-0',
+            'cloud_server_id_1': 'server-1',
+            'load_balancer_pool_id_1': 'pool-1'
+        }
+
+        data = helper.process_api_data_request(call, json_data)
+
+        self.assertEqual(len(data), 2)
+        self.assertNotIn('port', data[0])
+        self.assertNotIn('port', data[1])
+        self.assertEqual(
+            data[1].get('cloud_server').get('id'),
+            'server-1'
+        )
+        self.assertEqual(
+            data[1].get('load_balancer_pool').get('id'),
+            'pool-1'
+        )
+
+    def test_bulk_load_balancer_pool_nodes_reject_partial_rows(self):
+        helper = load_helper_module()
+        call = next(
+            call for call in defaults.RACKCONNECT_EXTRA_API_CALLS
+            if call.get('title') == 'Add Nodes to Load Balancer Pools'
+        )
+        json_data = {
+            'cloud_server_id': 'server-0',
+            'load_balancer_pool_id': 'pool-0',
+            'cloud_server_id_1': 'server-1',
+            'cloud_server_id_2': 'server-2',
+            'load_balancer_pool_id_2': 'pool-2'
+        }
+
+        with self.assertRaises(helper.InvalidRequestData) as context:
+            helper.process_api_data_request(call, json_data)
+
+        self.assertEqual(
+            str(context.exception),
+            'Missing required duplicate row values: load_balancer_pool_id_1.'
+        )
+
+    def test_nested_duplicate_lists_reject_partial_rows(self):
+        helper = load_helper_module()
+        call = {
+            'data_object': json.dumps({
+                'nodes': [
+                    {'a': '{sid}', 'b': '{pid}'},
+                    {'a': '{sid_1}', 'b': '{pid_1}'}
+                ]
+            }),
+            'variables': [
+                {
+                    'variable_name': 'sid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }, {
+                    'variable_name': 'pid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }
+            ]
+        }
+        json_data = {
+            'sid': 'server-0',
+            'pid': 'pool-0',
+            'pid_1': 'pool-1'
+        }
+
+        with self.assertRaises(helper.InvalidRequestData) as context:
+            helper.process_api_data_request(call, json_data)
+
+        self.assertEqual(
+            str(context.exception),
+            'Missing required duplicate row values: sid_1.'
+        )
+
+    def test_nested_duplicate_lists_preserve_order_and_duplicates(self):
+        helper = load_helper_module()
+        call = {
+            'data_object': json.dumps({
+                'nodes': [
+                    {'id': '{sid}'},
+                    {'id': '{sid_1}'},
+                    {'id': '{sid_2}'}
+                ]
+            }),
+            'variables': [
+                {
+                    'variable_name': 'sid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }
+            ]
+        }
+
+        data = helper.process_api_data_request(
+            call,
+            {'sid': 'AAA', 'sid_1': 'AAA', 'sid_2': 'BBB'}
+        )
+
+        self.assertEqual(
+            data,
+            {'nodes': [{'id': 'AAA'}, {'id': 'AAA'}, {'id': 'BBB'}]}
+        )
+
+    def test_nested_duplicate_lists_allow_nested_objects(self):
+        helper = load_helper_module()
+        call = {
+            'data_object': json.dumps({
+                'nodes': [
+                    {'cloud_server': {'id': '{sid}'}},
+                    {'cloud_server': {'id': '{sid_1}'}}
+                ]
+            }),
+            'variables': [
+                {
+                    'variable_name': 'sid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }
+            ]
+        }
+
+        data = helper.process_api_data_request(
+            call,
+            {'sid': 'server-0', 'sid_1': 'server-1'}
+        )
+
+        self.assertEqual(
+            data,
+            {
+                'nodes': [
+                    {'cloud_server': {'id': 'server-0'}},
+                    {'cloud_server': {'id': 'server-1'}}
+                ]
+            }
+        )
+
+    def test_duplicate_row_skip_ignores_blank_optional_fields(self):
+        helper = load_helper_module()
+        call = {
+            'data_object': json.dumps([
+                {'server': '{sid}', 'note': '{note}'}
+            ]),
+            'variables': [
+                {
+                    'variable_name': 'sid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }, {
+                    'variable_name': 'note',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': False
+                }
+            ]
+        }
+
+        data = helper.process_api_data_request(call, {'sid': 'server-0'})
+
+        self.assertEqual(data, [{'server': 'server-0'}])
+
+    def test_duplicate_rows_all_blank_raise_explicit_error(self):
+        helper = load_helper_module()
+        call = {
+            'data_object': json.dumps([
+                {'server': '{sid}', 'pool': '{pid}'}
+            ]),
+            'variables': [
+                {
+                    'variable_name': 'sid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }, {
+                    'variable_name': 'pid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }
+            ]
+        }
+
+        with self.assertRaises(helper.InvalidRequestData) as context:
+            helper.process_api_data_request(call, {})
+
+        self.assertEqual(
+            str(context.exception),
+            'At least one complete duplicate row is required.'
+        )
+
+    def test_invalid_integer_value_raises_explicit_error(self):
+        helper = load_helper_module()
+        call = {
+            'data_object': json.dumps({'checks': '{maximum_checks}'}),
+            'variables': [
+                {
+                    'variable_name': 'maximum_checks',
+                    'field_type': 'integer'
+                }
+            ]
+        }
+
+        with self.assertRaises(helper.InvalidRequestData) as context:
+            helper.process_api_data_request(
+                call,
+                {'maximum_checks': 'not-a-number'}
+            )
+
+        self.assertEqual(
+            str(context.exception),
+            'Invalid integer value for maximum_checks.'
+        )
+
+    def test_nested_scalar_list_survives_skipped_duplicate_row(self):
+        helper = load_helper_module()
+        call = {
+            'data_object': json.dumps({
+                'items': [
+                    '{tag}',
+                    {'server': '{sid}', 'pool': '{pid}'}
+                ]
+            }),
+            'variables': [
+                {
+                    'variable_name': 'tag',
+                    'field_type': 'text'
+                }, {
+                    'variable_name': 'sid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }, {
+                    'variable_name': 'pid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }
+            ]
+        }
+
+        data = helper.process_api_data_request(call, {'tag': 'keep-me'})
+
+        self.assertEqual(data, {'items': ['keep-me']})
+
+    def test_history_logging_keeps_record_for_float_values(self):
+        helper = load_helper_module()
+
+        class FakeHistory(object):
+            def __init__(self):
+                self.items = []
+
+            def insert(self, item):
+                self.items.append(item)
+
+        class FakeDb(object):
+            def __init__(self):
+                self.history = FakeHistory()
+
+        class FakeG(object):
+            def __init__(self):
+                self.db = FakeDb()
+
+        helper.g = FakeG()
+        helper.session = {'username': 'tester'}
+        call = {
+            'data_object': json.dumps({'value': '{amount}'}),
+            'variables': [
+                {
+                    'variable_name': 'amount',
+                    'field_type': 'float'
+                }
+            ]
+        }
+        request = {
+            'api_verb': 'POST',
+            'amount': '1.5'
+        }
+
+        helper.log_api_call_request(
+            None,
+            None,
+            None,
+            200,
+            call,
+            request,
+            {'value': 1.5},
+            '/example',
+            'Example'
+        )
+
+        self.assertEqual(len(helper.g.db.history.items), 1)
+        self.assertEqual(
+            helper.g.db.history.items[0].get('request').get('data'),
+            {'value': 1.5}
+        )
+
+    def test_history_logging_escapes_dotted_keys(self):
+        helper = load_helper_module()
+
+        class FakeHistory(object):
+            def __init__(self):
+                self.items = []
+
+            def insert(self, item):
+                for key in item.get('request').get('data'):
+                    if '.' in key:
+                        raise Exception('dotted key rejected by mongo')
+
+                self.items.append(item)
+
+        class FakeDb(object):
+            def __init__(self):
+                self.history = FakeHistory()
+
+        class FakeG(object):
+            def __init__(self):
+                self.db = FakeDb()
+
+        helper.g = FakeG()
+        helper.session = {'username': 'tester'}
+
+        helper.log_api_call_request(
+            None,
+            None,
+            None,
+            200,
+            {'data_object': '', 'variables': []},
+            {'api_verb': 'POST'},
+            {'metadata.key': {'nested.key': 'value'}},
+            '/example',
+            'Example'
+        )
+
+        self.assertEqual(
+            helper.g.db.history.items[0].get('request').get('data'),
+            {'metadata&#46;key': {'nested&#46;key': 'value'}}
+        )
+
+    def test_optional_only_duplicate_row_is_not_treated_as_blank(self):
+        """A row is blank only when no grouped field was filled at all.
+
+        Judging blankness on required fields alone would drop a row whose
+        optional value the user typed, which is the silent data loss the
+        partial-row rejection exists to prevent.
+        """
+        helper = load_helper_module()
+        call = {
+            'data_object': json.dumps([
+                {'server': '{sid}', 'note': '{note}'},
+                {'server': '{sid_1}', 'note': '{note_1}'}
+            ]),
+            'variables': [
+                {
+                    'variable_name': 'sid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }, {
+                    'variable_name': 'note',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': False
+                }
+            ]
+        }
+
+        with self.assertRaises(helper.InvalidRequestData) as context:
+            helper.process_api_data_request(
+                call,
+                {
+                    'sid': 'server-0',
+                    'note_1': 'meant to send this row'
+                }
+            )
+
+        self.assertEqual(
+            str(context.exception),
+            'Missing required duplicate row values: sid_1.'
+        )
+
+    def test_untouched_optional_duplicate_row_is_still_dropped(self):
+        helper = load_helper_module()
+        call = {
+            'data_object': json.dumps([
+                {'server': '{sid}', 'note': '{note}'},
+                {'server': '{sid_1}', 'note': '{note_1}'}
+            ]),
+            'variables': [
+                {
+                    'variable_name': 'sid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }, {
+                    'variable_name': 'note',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': False
+                }
+            ]
+        }
+
+        data = helper.process_api_data_request(call, {'sid': 'server-0'})
+
+        self.assertEqual(data, [{'server': 'server-0'}])
+
+    def test_blank_duplicate_rows_are_still_dropped(self):
+        helper = load_helper_module()
+        call = next(
+            call for call in defaults.RACKCONNECT_EXTRA_API_CALLS
+            if call.get('title') == 'Remove Nodes from Server Groups'
+        )
+
+        data = helper.process_api_data_request(
+            call,
+            {
+                'cloud_server_id': 'server-a',
+                'server_group_id': 'group-a'
+            }
+        )
+
+        self.assertEqual(
+            data,
+            [{
+                'cloud_server': {'id': 'server-a'},
+                'server_group': {'id': 'group-a'}
+            }]
+        )
+
+    def test_monitoring_private_zone_skips_blank_metadata_key(self):
+        helper = load_helper_module()
+        data = helper.process_api_data_request(
+            defaults.MONITORING_PRIVATE_ZONE_CALL,
+            {'label': 'zone-a', 'metadata_value': 'value-a'}
+        )
+
+        self.assertEqual(data.get('label'), 'zone-a')
+        self.assertNotIn('metadata', data)
+
+    def test_bulk_server_group_nodes_render_three_rows(self):
+        helper = load_helper_module()
+        call = next(
+            call for call in defaults.RACKCONNECT_EXTRA_API_CALLS
+            if call.get('title') == 'Remove Nodes from Server Groups'
+        )
+        json_data = {
+            'cloud_server_id': 'server-a',
+            'server_group_id': 'group-a',
+            'cloud_server_id_1': 'server-a',
+            'server_group_id_1': 'group-b',
+            'cloud_server_id_2': 'server-b',
+            'server_group_id_2': 'group-b'
+        }
+
+        data = helper.process_api_data_request(call, json_data)
+
+        self.assertEqual(
+            [
+                item.get('cloud_server').get('id')
+                for item in data
+            ],
+            ['server-a', 'server-a', 'server-b']
+        )
+        self.assertEqual(
+            [
+                item.get('server_group').get('id')
+                for item in data
+            ],
+            ['group-a', 'group-b', 'group-b']
+        )
+
+    def test_bulk_rackconnect_variables_are_grouped_duplicates(self):
+        calls = [
+            call for call in defaults.RACKCONNECT_EXTRA_API_CALLS
+            if call.get('title') in [
+                'Add Nodes to Load Balancer Pools',
+                'Remove Nodes from Load Balancer Pools',
+                'Add Nodes to Server Groups',
+                'Remove Nodes from Server Groups'
+            ]
+        ]
+
+        self.assertEqual(len(calls), 4)
+        for call in calls:
+            variables = call.get('variables')
+            self.assertTrue(variables[0].get('duplicate'))
+            self.assertTrue(variables[0].get('duplicate_group'))
+            self.assertTrue(all(
+                var.get('duplicate_group') ==
+                variables[0].get('duplicate_group')
+                for var in variables
+            ))
+
+    def test_bulk_bodies_hold_ten_association_rows(self):
+        bulk_calls = [
+            call for call in defaults.RACKCONNECT_EXTRA_API_CALLS
+            if (call.get('verb'), call.get('api_uri'))
+            in defaults.RACKCONNECT_BULK_API_CALL_KEYS
+        ]
+
+        self.assertEqual(len(bulk_calls), 4)
+        for call in bulk_calls:
+            body = json.loads(call.get('data_object'))
+            self.assertEqual(
+                len(body),
+                defaults.BULK_ROW_COUNT,
+                '%s should offer %d rows' % (
+                    call.get('title'), defaults.BULK_ROW_COUNT
+                )
+            )
+
+            """
+                The duplicate-row UI can only fill a row whose placeholder is
+                already in the body, so every row past the first must carry
+                the _N suffix the UI assigns to cloned inputs.
+            """
+            suffixes = re.findall(r'_(\d+)\}', call.get('data_object'))
+            self.assertEqual(
+                max(int(suffix) for suffix in suffixes),
+                defaults.BULK_ROW_COUNT - 1
+            )
+
+    def test_bulk_data_object_suffixes_every_variable_per_row(self):
+        body = json.loads(
+            defaults._bulk_data_object(
+                defaults.LOAD_BALANCER_POOL_NODE_FIELDS, 3
+            )
+        )
+
+        self.assertEqual(
+            body,
+            [
+                {
+                    'cloud_server': {'id': '{cloud_server_id}'},
+                    'load_balancer_pool': {'id': '{load_balancer_pool_id}'}
+                }, {
+                    'cloud_server': {'id': '{cloud_server_id_1}'},
+                    'load_balancer_pool': {'id': '{load_balancer_pool_id_1}'}
+                }, {
+                    'cloud_server': {'id': '{cloud_server_id_2}'},
+                    'load_balancer_pool': {'id': '{load_balancer_pool_id_2}'}
+                }
+            ]
+        )
+
+    def test_bulk_data_object_uses_crlf_line_endings(self):
+        body = defaults._bulk_data_object(defaults.SERVER_GROUP_NODE_FIELDS, 2)
+
+        self.assertIn('\r\n', body)
+        self.assertNotIn('\n', body.replace('\r\n', ''))
+
+    def test_bulk_load_balancer_pool_nodes_render_ten_rows(self):
+        helper = load_helper_module()
+        call = next(
+            call for call in defaults.RACKCONNECT_EXTRA_API_CALLS
+            if call.get('title') == 'Add Nodes to Load Balancer Pools'
+        )
+
+        json_data = {}
+        for index in range(defaults.BULK_ROW_COUNT):
+            suffix = '' if index == 0 else '_%d' % index
+            json_data['cloud_server_id' + suffix] = 'server-%d' % index
+            json_data['load_balancer_pool_id' + suffix] = 'pool-%d' % index
+
+        data = helper.process_api_data_request(call, json_data)
+
+        self.assertEqual(len(data), defaults.BULK_ROW_COUNT)
+        self.assertEqual(
+            [item.get('cloud_server').get('id') for item in data],
+            ['server-%d' % index
+             for index in range(defaults.BULK_ROW_COUNT)]
+        )
+
+        self.assertEqual(
+            [item.get('load_balancer_pool').get('id') for item in data],
+            ['pool-%d' % index
+             for index in range(defaults.BULK_ROW_COUNT)]
+        )
+
+    def test_variable_preserves_duplicate_metadata(self):
+        models = load_models_module()
+
+        variable = models.Variable({
+            'variable_name': 'cloud_server_id',
+            'field_type': 'text',
+            'duplicate': True,
+            'duplicate_group': 'load_balancer_pool_nodes',
+            'id_value': 0
+        })
+
+        self.assertTrue(variable.__dict__.get('duplicate'))
+        self.assertEqual(
+            variable.__dict__.get('duplicate_group'),
+            'load_balancer_pool_nodes'
+        )
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -1,0 +1,13 @@
+{
+  "name": "pitchfork-js-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser-side regression tests for Pitchfork templates",
+  "scripts": {
+    "test": "node duplicate_rows.test.js"
+  },
+  "devDependencies": {
+    "jquery": "^3.7.1",
+    "jsdom": "^24.0.0"
+  }
+}

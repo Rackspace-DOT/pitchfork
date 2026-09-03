@@ -45,3 +45,7 @@ venv
 # Our specific working settings files
 wsgi.py
 uwsgi.ini
+__pycache__
+
+# Node (tests/js browser-side tests)
+node_modules
