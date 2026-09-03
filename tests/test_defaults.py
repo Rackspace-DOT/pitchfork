@@ -929,6 +929,74 @@ class DefaultsTests(unittest.TestCase):
             {'metadata&#46;key': {'nested&#46;key': 'value'}}
         )
 
+    def test_optional_only_duplicate_row_is_not_treated_as_blank(self):
+        """A row is blank only when no grouped field was filled at all.
+
+        Judging blankness on required fields alone would drop a row whose
+        optional value the user typed, which is the silent data loss the
+        partial-row rejection exists to prevent.
+        """
+        helper = load_helper_module()
+        call = {
+            'data_object': json.dumps([
+                {'server': '{sid}', 'note': '{note}'},
+                {'server': '{sid_1}', 'note': '{note_1}'}
+            ]),
+            'variables': [
+                {
+                    'variable_name': 'sid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }, {
+                    'variable_name': 'note',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': False
+                }
+            ]
+        }
+
+        with self.assertRaises(helper.InvalidRequestData) as context:
+            helper.process_api_data_request(
+                call,
+                {
+                    'sid': 'server-0',
+                    'note_1': 'meant to send this row'
+                }
+            )
+
+        self.assertEqual(
+            str(context.exception),
+            'Missing required duplicate row values: sid_1.'
+        )
+
+    def test_untouched_optional_duplicate_row_is_still_dropped(self):
+        helper = load_helper_module()
+        call = {
+            'data_object': json.dumps([
+                {'server': '{sid}', 'note': '{note}'},
+                {'server': '{sid_1}', 'note': '{note_1}'}
+            ]),
+            'variables': [
+                {
+                    'variable_name': 'sid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }, {
+                    'variable_name': 'note',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': False
+                }
+            ]
+        }
+
+        data = helper.process_api_data_request(call, {'sid': 'server-0'})
+
+        self.assertEqual(data, [{'server': 'server-0'}])
+
     def test_blank_duplicate_rows_are_still_dropped(self):
         helper = load_helper_module()
         call = next(

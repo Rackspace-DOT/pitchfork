@@ -348,6 +348,12 @@ def variable_for_placeholder(api_call, name):
     return {}
 
 
+def is_duplicate_group_placeholder(api_call, name):
+    return bool(variable_for_placeholder(api_call, name).get(
+        'duplicate_group'
+    ))
+
+
 def is_required_duplicate_group_placeholder(api_call, name):
     variable = variable_for_placeholder(api_call, name)
     return variable.get('duplicate_group') and variable.get('required')
@@ -362,29 +368,36 @@ def duplicate_row_state(api_call, json_data, item):
     """Classify a duplicate row and name the required values it is missing.
 
     The stored body always renders every row slot, so a user filling three
-    rows leaves the rest untouched: a row with none of its required values is
-    blank and gets dropped. A row with some but not all of them is a mistake
-    -- dropping it silently would return success for a request that quietly
-    lost data -- so callers reject the whole submission instead.
+    rows leaves the rest untouched: a row where no grouped field at all was
+    filled is blank and gets dropped. Once any grouped field carries a value
+    the user meant to send that row, so a missing required value there is a
+    mistake -- dropping it silently would return success for a request that
+    quietly lost data -- and callers reject the whole submission instead.
+
+    Optional grouped fields count toward "the user filled something in", which
+    is why blankness is judged over every grouped placeholder rather than only
+    the required ones.
     """
     placeholders = re.findall(r'\{([^{}]+?)\}', json.dumps(item))
-    required_grouped = [
+    grouped = [
         name for name in placeholders
-        if is_required_duplicate_group_placeholder(api_call, name)
+        if is_duplicate_group_placeholder(api_call, name)
     ]
-    if not required_grouped:
+    if not grouped:
         return DUPLICATE_ROW_COMPLETE, []
 
-    missing = [
-        name for name in required_grouped if not json_data.get(name)
+    missing_required = [
+        name for name in grouped
+        if is_required_duplicate_group_placeholder(api_call, name) and
+        not json_data.get(name)
     ]
-    if not missing:
-        return DUPLICATE_ROW_COMPLETE, []
+    if not any(json_data.get(name) for name in grouped):
+        return DUPLICATE_ROW_BLANK, missing_required
 
-    if len(missing) == len(required_grouped):
-        return DUPLICATE_ROW_BLANK, missing
+    if missing_required:
+        return DUPLICATE_ROW_PARTIAL, missing_required
 
-    return DUPLICATE_ROW_PARTIAL, missing
+    return DUPLICATE_ROW_COMPLETE, []
 
 
 def incomplete_duplicate_row_message(missing_values):
