@@ -411,12 +411,6 @@ def recursive_dict_object(
 
                 if len(temp_list_dict) > 0:
                     temp_list.append(copy.deepcopy(temp_list_dict))
-                    temp_list = [
-                        dict(temp_set) for temp_set in set(
-                            tuple(item.items())
-                            for item in temp_list
-                        )
-                    ]
 
             else:
                 _key = re.match(r'\{(.+?)\}', value_list)
@@ -759,12 +753,12 @@ def log_api_call_request(
     if not request.get('api_verb') in ['PUT', 'POST', 'DELETE']:
         rep_body = None
 
-    if data_package:
-        data_package = process_api_data_request(
-            call,
-            sanitize_data_for_mongo(request)
-        )
     try:
+        if data_package:
+            data_package = process_api_data_request(
+                call,
+                sanitize_data_for_mongo(request)
+            )
         g.db.history.insert(
             {
                 'response': {

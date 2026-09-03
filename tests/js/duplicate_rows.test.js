@@ -8,7 +8,7 @@
  * after the source '+' had already been hidden. The user saw the button vanish
  * with no new rows.
  *
- * The JS is read out of the template itself rather than copied here, so these
+ * The JS is read out of the shared script rather than copied here, so these
  * tests exercise the shipped code. Run via tests/test_duplicate_rows_js.py, or
  * directly:
  *
@@ -142,8 +142,10 @@ function variablesTable(rows, maxIndex) {
               '" type="text">';
         return '<tr' + (isGroup
                 ? ' class="duplicate-group-row" data-duplicate-group="' +
-                  row.group + '" data-duplicate-index="0"' +
-                  ' data-duplicate-base-name="' + row.name + '"'
+                  row.group + '"'
+                : '') + (isGroup || row.plus
+                ? ' data-duplicate-index="0" data-duplicate-base-name="' +
+                  row.name + '"'
                 : '') + '>' +
             '<td>' + controls + '</td>' +
             '<td class="variable-name-cell">' + row.name + '</td>' +
@@ -376,6 +378,11 @@ test('grouped: cloned select fields remain serializable', function() {
         ),
         0,
         'cloned select should reset to its placeholder'
+    );
+    assert.equal(
+        window.eval('jQuery("#t select[name=port_1]").val()'),
+        '',
+        'cloned select should not keep the source row value'
     );
     assert.ok(
         window.eval('jQuery("#t :input").serialize()')
@@ -627,6 +634,18 @@ test('legacy: ungrouped duplicates still clone one row at a time', function() {
     );
 
     assert.equal(clickPlus(window), 'none', 'capped at three rows');
+});
+
+test('legacy: ungrouped base names ending in digits keep their base', function() {
+    var window = load(variablesTable([{name: 'ip_2', plus: true}], 2));
+
+    clickAndAssertProgress(window, 'first click');
+    clickAndAssertProgress(window, 'second click');
+
+    assert.deepEqual(
+        inputNames(window), ['ip_2', 'ip_2_1', 'ip_2_2'],
+        'suffixes append to the full variable name'
+    );
 });
 
 test('legacy: ungrouped duplicates honor a smaller cap', function() {

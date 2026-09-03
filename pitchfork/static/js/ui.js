@@ -141,7 +141,10 @@ function update_duplicate_field(row, count) {
     field.attr('name', next_name);
     field.attr('id', next_name);
     if (field.is('select')) {
-        field.prop('selectedIndex', 0);
+        if (!field.find('option[value=""]').length) {
+            field.prepend('<option value=""></option>');
+        }
+        field.val('');
     } else {
         field.val('');
     }
@@ -285,9 +288,8 @@ $(document)
 
         var parent_row = $(this).parent().parent();
         var clone_row = $(this).parent().parent().clone(true);
-        var current_name = parent_row.find(':input').first().attr('name');
         var max_index = duplicate_group_max($(this));
-        var field_count = duplicate_field_count(current_name);
+        var field_count = duplicate_row_index(parent_row);
         if (field_count < max_index) {
             clone_row.find('.tooltip-title').removeData('bs.tooltip');
             update_duplicate_field(clone_row, field_count);

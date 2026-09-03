@@ -663,6 +663,70 @@ class DefaultsTests(unittest.TestCase):
 
         self.assertEqual(data, {'nodes': [{'a': 'server-0', 'b': 'pool-0'}]})
 
+    def test_nested_duplicate_lists_preserve_order_and_duplicates(self):
+        helper = load_helper_module()
+        call = {
+            'data_object': json.dumps({
+                'nodes': [
+                    {'id': '{sid}'},
+                    {'id': '{sid_1}'},
+                    {'id': '{sid_2}'}
+                ]
+            }),
+            'variables': [
+                {
+                    'variable_name': 'sid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }
+            ]
+        }
+
+        data = helper.process_api_data_request(
+            call,
+            {'sid': 'AAA', 'sid_1': 'AAA', 'sid_2': 'BBB'}
+        )
+
+        self.assertEqual(
+            data,
+            {'nodes': [{'id': 'AAA'}, {'id': 'AAA'}, {'id': 'BBB'}]}
+        )
+
+    def test_nested_duplicate_lists_allow_nested_objects(self):
+        helper = load_helper_module()
+        call = {
+            'data_object': json.dumps({
+                'nodes': [
+                    {'cloud_server': {'id': '{sid}'}},
+                    {'cloud_server': {'id': '{sid_1}'}}
+                ]
+            }),
+            'variables': [
+                {
+                    'variable_name': 'sid',
+                    'field_type': 'text',
+                    'duplicate_group': 'nodes',
+                    'required': True
+                }
+            ]
+        }
+
+        data = helper.process_api_data_request(
+            call,
+            {'sid': 'server-0', 'sid_1': 'server-1'}
+        )
+
+        self.assertEqual(
+            data,
+            {
+                'nodes': [
+                    {'cloud_server': {'id': 'server-0'}},
+                    {'cloud_server': {'id': 'server-1'}}
+                ]
+            }
+        )
+
     def test_duplicate_row_skip_ignores_blank_optional_fields(self):
         helper = load_helper_module()
         call = {
@@ -716,6 +780,54 @@ class DefaultsTests(unittest.TestCase):
             str(context.exception),
             'At least one complete duplicate row is required.'
         )
+
+    def test_history_logging_swallows_data_rebuild_errors(self):
+        helper = load_helper_module()
+
+        class FakeHistory(object):
+            def __init__(self):
+                self.items = []
+
+            def insert(self, item):
+                self.items.append(item)
+
+        class FakeDb(object):
+            def __init__(self):
+                self.history = FakeHistory()
+
+        class FakeG(object):
+            def __init__(self):
+                self.db = FakeDb()
+
+        helper.g = FakeG()
+        helper.session = {'username': 'tester'}
+        call = {
+            'data_object': json.dumps({'value': '{amount}'}),
+            'variables': [
+                {
+                    'variable_name': 'amount',
+                    'field_type': 'float'
+                }
+            ]
+        }
+        request = {
+            'api_verb': 'POST',
+            'amount': '1.5'
+        }
+
+        helper.log_api_call_request(
+            None,
+            None,
+            None,
+            200,
+            call,
+            request,
+            {'value': 1.5},
+            '/example',
+            'Example'
+        )
+
+        self.assertEqual(helper.g.db.history.items, [])
 
     def test_monitoring_private_zone_skips_blank_metadata_key(self):
         helper = load_helper_module()
