@@ -353,16 +353,45 @@ def is_required_duplicate_group_placeholder(api_call, name):
     return variable.get('duplicate_group') and variable.get('required')
 
 
-def has_missing_required_duplicate_group_value(api_call, json_data, item):
+DUPLICATE_ROW_COMPLETE = 'complete'
+DUPLICATE_ROW_BLANK = 'blank'
+DUPLICATE_ROW_PARTIAL = 'partial'
+
+
+def duplicate_row_state(api_call, json_data, item):
+    """Classify a duplicate row and name the required values it is missing.
+
+    The stored body always renders every row slot, so a user filling three
+    rows leaves the rest untouched: a row with none of its required values is
+    blank and gets dropped. A row with some but not all of them is a mistake
+    -- dropping it silently would return success for a request that quietly
+    lost data -- so callers reject the whole submission instead.
+    """
     placeholders = re.findall(r'\{([^{}]+?)\}', json.dumps(item))
     required_grouped = [
         name for name in placeholders
         if is_required_duplicate_group_placeholder(api_call, name)
     ]
     if not required_grouped:
-        return False
+        return DUPLICATE_ROW_COMPLETE, []
 
-    return any(not json_data.get(name) for name in required_grouped)
+    missing = [
+        name for name in required_grouped if not json_data.get(name)
+    ]
+    if not missing:
+        return DUPLICATE_ROW_COMPLETE, []
+
+    if len(missing) == len(required_grouped):
+        return DUPLICATE_ROW_BLANK, missing
+
+    return DUPLICATE_ROW_PARTIAL, missing
+
+
+def incomplete_duplicate_row_message(missing_values):
+    """Name the fields keeping a partly filled duplicate row from sending."""
+    return 'Missing required duplicate row values: %s.' % ', '.join(
+        missing_values
+    )
 
 
 def recursive_dict_object(
@@ -402,11 +431,16 @@ def recursive_dict_object(
         skipped_required_duplicate_row = False
         for value_list in value:
             if isinstance(value_list, dict):
-                if has_missing_required_duplicate_group_value(
+                row_state, missing_values = duplicate_row_state(
                     api_call,
                     json_data,
                     value_list
-                ):
+                )
+                if row_state == DUPLICATE_ROW_PARTIAL:
+                    raise InvalidRequestData(
+                        incomplete_duplicate_row_message(missing_values)
+                    )
+                if row_state == DUPLICATE_ROW_BLANK:
                     skipped_required_duplicate_row = True
                     continue
                 temp_list_dict = {}
@@ -584,11 +618,16 @@ def process_api_data_request(api_call, json_data):
         skipped_required_duplicate_row = False
         for item in temp_json:
             if isinstance(item, dict):
-                if has_missing_required_duplicate_group_value(
+                row_state, missing_values = duplicate_row_state(
                     api_call,
                     json_data,
                     item
-                ):
+                )
+                if row_state == DUPLICATE_ROW_PARTIAL:
+                    raise InvalidRequestData(
+                        incomplete_duplicate_row_message(missing_values)
+                    )
+                if row_state == DUPLICATE_ROW_BLANK:
                     skipped_required_duplicate_row = True
                     continue
                 temp_item_dict = {}
@@ -782,12 +821,10 @@ def log_api_call_request(
     if not request.get('api_verb') in ['PUT', 'POST', 'DELETE']:
         rep_body = None
 
+    if data_package:
+        data_package = sanitize_keys_for_mongo(data_package)
+
     try:
-        if data_package:
-            data_package = process_api_data_request(
-                call,
-                sanitize_data_for_mongo(request)
-            )
         g.db.history.insert(
             {
                 'response': {
@@ -817,6 +854,25 @@ def log_api_call_request(
         pass
 
     return
+
+
+def sanitize_keys_for_mongo(value):
+    """Escape dots in dict keys so the history record can be stored.
+
+    Mongo rejects dots in document keys, and a body that builds its keys from
+    user input -- a metadata key, say -- can produce them. Only keys need
+    escaping here: the body itself was already built for the outbound call.
+    """
+    if isinstance(value, dict):
+        return {
+            re.sub(r'\.', '&#46;', str(key)): sanitize_keys_for_mongo(item)
+            for key, item in value.iteritems()
+        }
+
+    if isinstance(value, list):
+        return [sanitize_keys_for_mongo(item) for item in value]
+
+    return value
 
 
 def sanitize_data_for_mongo(data):

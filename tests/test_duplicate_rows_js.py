@@ -4,7 +4,9 @@ import subprocess
 import unittest
 
 
-JS_DIR = os.path.join(os.path.dirname(__file__), 'js')
+JS_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), 'js')
+)
 JS_TEST = os.path.join(JS_DIR, 'duplicate_rows.test.js')
 INSTALL_HINT = 'cd %s && npm install' % os.path.join('tests', 'js')
 

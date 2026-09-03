@@ -604,7 +604,7 @@ class DefaultsTests(unittest.TestCase):
             'pool-1'
         )
 
-    def test_bulk_load_balancer_pool_nodes_skip_partial_rows(self):
+    def test_bulk_load_balancer_pool_nodes_reject_partial_rows(self):
         helper = load_helper_module()
         call = next(
             call for call in defaults.RACKCONNECT_EXTRA_API_CALLS
@@ -618,19 +618,15 @@ class DefaultsTests(unittest.TestCase):
             'load_balancer_pool_id_2': 'pool-2'
         }
 
-        data = helper.process_api_data_request(call, json_data)
+        with self.assertRaises(helper.InvalidRequestData) as context:
+            helper.process_api_data_request(call, json_data)
 
-        self.assertEqual(len(data), 2)
         self.assertEqual(
-            [item.get('cloud_server').get('id') for item in data],
-            ['server-0', 'server-2']
-        )
-        self.assertEqual(
-            [item.get('load_balancer_pool').get('id') for item in data],
-            ['pool-0', 'pool-2']
+            str(context.exception),
+            'Missing required duplicate row values: load_balancer_pool_id_1.'
         )
 
-    def test_nested_duplicate_lists_skip_partial_rows_without_leaking(self):
+    def test_nested_duplicate_lists_reject_partial_rows(self):
         helper = load_helper_module()
         call = {
             'data_object': json.dumps({
@@ -659,9 +655,13 @@ class DefaultsTests(unittest.TestCase):
             'pid_1': 'pool-1'
         }
 
-        data = helper.process_api_data_request(call, json_data)
+        with self.assertRaises(helper.InvalidRequestData) as context:
+            helper.process_api_data_request(call, json_data)
 
-        self.assertEqual(data, {'nodes': [{'a': 'server-0', 'b': 'pool-0'}]})
+        self.assertEqual(
+            str(context.exception),
+            'Missing required duplicate row values: sid_1.'
+        )
 
     def test_nested_duplicate_lists_preserve_order_and_duplicates(self):
         helper = load_helper_module()
@@ -835,7 +835,7 @@ class DefaultsTests(unittest.TestCase):
 
         self.assertEqual(data, {'items': ['keep-me']})
 
-    def test_history_logging_swallows_data_rebuild_errors(self):
+    def test_history_logging_keeps_record_for_float_values(self):
         helper = load_helper_module()
 
         class FakeHistory(object):
@@ -881,7 +881,76 @@ class DefaultsTests(unittest.TestCase):
             'Example'
         )
 
-        self.assertEqual(helper.g.db.history.items, [])
+        self.assertEqual(len(helper.g.db.history.items), 1)
+        self.assertEqual(
+            helper.g.db.history.items[0].get('request').get('data'),
+            {'value': 1.5}
+        )
+
+    def test_history_logging_escapes_dotted_keys(self):
+        helper = load_helper_module()
+
+        class FakeHistory(object):
+            def __init__(self):
+                self.items = []
+
+            def insert(self, item):
+                for key in item.get('request').get('data'):
+                    if '.' in key:
+                        raise Exception('dotted key rejected by mongo')
+
+                self.items.append(item)
+
+        class FakeDb(object):
+            def __init__(self):
+                self.history = FakeHistory()
+
+        class FakeG(object):
+            def __init__(self):
+                self.db = FakeDb()
+
+        helper.g = FakeG()
+        helper.session = {'username': 'tester'}
+
+        helper.log_api_call_request(
+            None,
+            None,
+            None,
+            200,
+            {'data_object': '', 'variables': []},
+            {'api_verb': 'POST'},
+            {'metadata.key': {'nested.key': 'value'}},
+            '/example',
+            'Example'
+        )
+
+        self.assertEqual(
+            helper.g.db.history.items[0].get('request').get('data'),
+            {'metadata&#46;key': {'nested&#46;key': 'value'}}
+        )
+
+    def test_blank_duplicate_rows_are_still_dropped(self):
+        helper = load_helper_module()
+        call = next(
+            call for call in defaults.RACKCONNECT_EXTRA_API_CALLS
+            if call.get('title') == 'Remove Nodes from Server Groups'
+        )
+
+        data = helper.process_api_data_request(
+            call,
+            {
+                'cloud_server_id': 'server-a',
+                'server_group_id': 'group-a'
+            }
+        )
+
+        self.assertEqual(
+            data,
+            [{
+                'cloud_server': {'id': 'server-a'},
+                'server_group': {'id': 'group-a'}
+            }]
+        )
 
     def test_monitoring_private_zone_skips_blank_metadata_key(self):
         helper = load_helper_module()

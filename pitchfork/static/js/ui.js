@@ -81,10 +81,18 @@ function display_message(message, alert_class) {
 }
 
 function show_product_message(message, alert_class) {
-    $('#generated_messages_product').html(
-        '<div class="alert alert-' + alert_class + '">' +
-        '<button type="button" class="close" data-dismiss="alert">' +
-        '&times;</button><p>' + message + '</p></div>');
+    /* Build the alert as nodes and set the message with text(): some
+     * messages come from the server and carry variable names taken from a
+     * call's stored data_object, which an admin controls. */
+    var alert = $('<div>').addClass('alert alert-' + alert_class);
+    $('<button>')
+        .attr('type', 'button')
+        .addClass('close')
+        .attr('data-dismiss', 'alert')
+        .html('&times;')
+        .appendTo(alert);
+    $('<p>').text(message).appendTo(alert);
+    $('#generated_messages_product').empty().append(alert);
 }
 
 function validate_field(field_name) {

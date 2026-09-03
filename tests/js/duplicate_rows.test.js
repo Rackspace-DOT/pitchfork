@@ -715,6 +715,64 @@ test('legacy: ungrouped duplicates get no "-"', function() {
 });
 
 
+/* show_product_message renders server-supplied text: an InvalidRequestData
+ * message names a variable taken from the call's stored data_object, which an
+ * admin controls. It must never become markup in another user's browser. */
+function extractMessageScript() {
+    var source = fs.readFileSync(UI_JS, 'utf8');
+    var start = source.indexOf('function show_product_message');
+    var end = source.indexOf('function validate_field');
+    if (start === -1 || end === -1 || end <= start) {
+        throw new Error(
+            'ui.js show_product_message moved -- update this extractor'
+        );
+    }
+    return source.slice(start, end);
+}
+
+
+test('messages: server text is rendered as text, not markup', function() {
+    var dom = new JSDOM(
+        '<!doctype html><html><body>' +
+        '<div id="generated_messages_product"></div>' +
+        '</body></html>',
+        {runScripts: 'dangerously'}
+    );
+    var window = dom.window;
+    window.eval(fs.readFileSync(JQUERY, 'utf8'));
+    window.eval(extractMessageScript());
+    window.eval(
+        'show_product_message(' +
+        '"Invalid integer value for <img src=x onerror=window.xss=1>.", ' +
+        '"error");'
+    );
+
+    assert.equal(
+        window.eval('jQuery("#generated_messages_product img").length'), 0,
+        'markup in a server message must not become a node'
+    );
+    assert.equal(
+        window.eval('typeof window.xss'), 'undefined',
+        'no injected handler ran'
+    );
+    assert.ok(
+        window.eval(
+            'jQuery("#generated_messages_product p").text()'
+        ).indexOf('<img src=x') !== -1,
+        'the message is shown verbatim as text'
+    );
+    assert.equal(
+        window.eval('jQuery("#generated_messages_product .alert").length'), 1,
+        'the alert wrapper still renders'
+    );
+    assert.equal(
+        window.eval('jQuery("#generated_messages_product button.close").length'),
+        1,
+        'the dismiss button still renders'
+    );
+});
+
+
 if (failures.length) {
     console.log('\n' + failures.length + ' failure(s):');
     failures.forEach(function(f) { console.log('  - ' + f); });
